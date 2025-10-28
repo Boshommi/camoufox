@@ -32,6 +32,7 @@ wget-log
 *.log
 
 # Python interface
+.venv
 venv/
 __pycache__/
 *.pyc

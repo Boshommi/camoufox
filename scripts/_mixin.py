@@ -107,18 +107,84 @@ def run(cmd, exit_on_fail=True, do_print=True):
     return retval
 
 
-def patch(patchfile, reverse=False, silent=False):
-    """Run a patch file"""
+def patch(patchfile, reverse=False, silent=False, fuzz=2):
+    """Run a patch file with git or patch command
+
+    Args:
+        patchfile: Path to patch file
+        reverse: Apply in reverse
+        silent: Suppress output
+        fuzz: Maximum fuzz factor (lines of context that can be off)
+    """
+    # Check if patch is already applied (dry-run test)
+    if not reverse:
+        dry_run_cmd = f"patch -p1 --dry-run --force --silent -i {patchfile}"
+        retval = run(dry_run_cmd, exit_on_fail=False, do_print=False)
+        if retval != 0:
+            # Patch already applied or will fail - check if reversed would work
+            reverse_test = f"patch -p1 -R --dry-run --force --silent -i {patchfile}"
+            reverse_retval = run(reverse_test, exit_on_fail=False, do_print=False)
+            if reverse_retval == 0:
+                if not silent:
+                    print(f"\n*** Skipping {patchfile} (already applied)")
+                return
+
+    # Check if we're in a git repo
+    is_git_repo = os.path.exists(".git")
+
+    if is_git_repo and not reverse:
+        # Try git apply first (more robust)
+        cmd = f"git apply --3way --whitespace=fix {patchfile}"
+        if silent:
+            cmd += " 2>/dev/null"
+        else:
+            print(f"\n*** -> {cmd}")
+        sys.stdout.flush()
+
+        retval = run(cmd, exit_on_fail=False, do_print=not silent)
+        if retval == 0:
+            return
+
+        # Git apply failed, fall back to patch with fuzz
+        if not silent:
+            print(f"Git apply failed, trying patch with fuzz={fuzz}")
+
+    # Use traditional patch command with fuzz tolerance
     if reverse:
-        cmd = f"patch -p1 -R -i {patchfile}"
+        cmd = f"patch -p1 -R --fuzz={fuzz} -i {patchfile}"
     else:
-        cmd = f"patch -p1 -i {patchfile}"
+        # --forward flag prevents prompting on already-applied patches
+        # Note: BSD patch (macOS) doesn't support --reject-format
+        cmd = f"patch -p1 --fuzz={fuzz} --forward -i {patchfile}"
+
     if silent:
-        cmd += ' > /dev/null'
+        cmd += " > /dev/null 2>&1"
     else:
         print(f"\n*** -> {cmd}")
     sys.stdout.flush()
-    run(cmd)
+
+    # Run patch and check result
+    retval = run(cmd, exit_on_fail=False, do_print=not silent)
+
+    # If patch failed, check if it's because hunks were already applied
+    if retval != 0:
+        # Quick check for .rej files using find (faster than glob on large dirs)
+        find_cmd = "find . -name '*.rej' -type f -print -quit"
+        find_result = run(find_cmd, exit_on_fail=False, do_print=False)
+
+        if find_result == 0:
+            # Found at least one .rej file - this is a real error
+            print(f"\n⚠️  Error: Patch {patchfile} had rejected hunks")
+            # Show the .rej files
+            run("find . -name '*.rej' -type f", exit_on_fail=False, do_print=True)
+            print(f"fatal error: command '{cmd}' failed")
+            sys.stdout.flush()
+            script_exit(1)
+        else:
+            # No .rej files means all hunks were already applied - that's OK
+            if not silent:
+                print(f"Note: All hunks in {patchfile} were already applied or skipped")
+            return
 
 
 __all__ = [

@@ -10,7 +10,7 @@ pacman := python python-pip p7zip go msitools wget aria2
 
 .PHONY: help fetch setup setup-minimal clean set-target distclean build package \
         build-launcher check-arch revert revert-checkpoint retag-baseline copy-additions edits run bootstrap mozbootstrap dir \
-        package-linux package-macos package-windows vcredist_arch patch unpatch \
+        package-linux package-macos package-windows vcredist_arch patch unpatch safe-patch \
         workspace check-arg edit-cfg ff-dbg tests tests-parallel update-ubo-assets tagged-checkpoint
 
 help:
@@ -39,6 +39,7 @@ help:
 	@echo "  ff-dbg          - Setup vanilla Firefox with minimal patches"
 	@echo "  patch           - Apply a patch"
 	@echo "  unpatch         - Remove a patch"
+	@echo "  safe-patch      - Safely apply a patch with automatic rollback on failure"
 	@echo "  workspace       - Sets the workspace to a patch, assuming its applied"
 	@echo "  tests           - Runs the Playwright tests"
 	@echo "  tests-parallel  - Runs the Playwright tests in parallel (use workers=N to specify worker count)"
@@ -263,6 +264,10 @@ patch:
 unpatch:
 	@make check-arg $(_ARGS);
 	cd $(cf_source_dir) && patch -p1 -R -i ../$(_ARGS)
+
+safe-patch:
+	@make check-arg $(_ARGS);
+	python3 scripts/safe-patch.py $(_ARGS) --version $(version) --release $(release)
 
 workspace:
 	@make check-arg $(_ARGS);

@@ -13,6 +13,39 @@ from _mixin import find_src_dir, get_moz_target, list_files, run, temp_cd
 UNNEEDED_PATHS = {'uninstall', 'pingsender.exe', 'pingsender', 'vaapitest', 'glxtest'}
 
 
+def restore_macos_permissions(app_path):
+    '''Restore executable permissions for macOS app bundle'''
+    import stat
+
+    # Make main executable and helpers executable
+    macos_dir = os.path.join(app_path, 'Contents', 'MacOS')
+    if not os.path.exists(macos_dir):
+        return
+
+    # Files that need to be executable
+    executables = ['camoufox', 'pingsender', 'nmhproxy']
+    for exe in executables:
+        exe_path = os.path.join(macos_dir, exe)
+        if os.path.exists(exe_path):
+            # Add executable permissions
+            st = os.stat(exe_path)
+            os.chmod(exe_path, st.st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+
+    # Make all .app bundles within MacOS executable
+    for item in os.listdir(macos_dir):
+        if item.endswith('.app'):
+            bundle_exe = os.path.join(macos_dir, item, 'Contents', 'MacOS')
+            if os.path.exists(bundle_exe):
+                for exe_file in os.listdir(bundle_exe):
+                    exe_path = os.path.join(bundle_exe, exe_file)
+                    if os.path.isfile(exe_path):
+                        st = os.stat(exe_path)
+                        os.chmod(
+                            exe_path,
+                            st.st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH,
+                        )
+
+
 def add_includes_to_package(package_file, includes, fonts, new_file, target):
     with tempfile.TemporaryDirectory() as temp_dir:
         # Extract package
@@ -67,6 +100,17 @@ def add_includes_to_package(package_file, includes, fonts, new_file, target):
                 else:
                     shutil.copy2(include, target_dir)
 
+        # For macOS, duplicate properties.json next to the executable so the
+        # Python launcher can resolve it via executable_path.parent/properties.json
+        if target == 'macos':
+            src_props = os.path.join(target_dir, 'properties.json')
+            if os.path.exists(src_props):
+                dest_props = os.path.join(
+                    temp_dir, 'Camoufox.app', 'Contents', 'MacOS', 'properties.json'
+                )
+                os.makedirs(os.path.dirname(dest_props), exist_ok=True)
+                shutil.copy2(src_props, dest_props)
+
         # Add the font folders under fonts/
         fonts_dir = os.path.join(target_dir, 'fonts')
         if target == 'linux':
@@ -91,8 +135,18 @@ def add_includes_to_package(package_file, includes, fonts, new_file, target):
             elif os.path.exists(os.path.join(target_dir, path)):
                 os.remove(os.path.join(target_dir, path))
 
+        # Restore executable permissions for macOS
+        if target == 'macos':
+            app_path = os.path.join(temp_dir, 'Camoufox.app')
+            restore_macos_permissions(app_path)
+
         # Update package
-        run(join(['7z', 'u', new_file, f'{temp_dir}/*', '-r', '-mx=9']))
+        # Use zip for macOS to preserve file permissions, 7z for others
+        if target == 'macos':
+            # Use zip which preserves Unix permissions
+            run(f'cd {temp_dir} && zip -r -y -q "{os.path.abspath(new_file)}" .')
+        else:
+            run(join(['7z', 'u', new_file, f'{temp_dir}/*', '-r', '-mx=9']))
 
 
 def get_args():
