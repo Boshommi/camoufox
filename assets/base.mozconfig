@@ -1,5 +1,13 @@
 ac_add_options --enable-application=browser
+
+# Enable sccache for faster builds (optional but recommended)
+# Install: brew install sccache (macOS) or cargo install sccache (Linux)
+ac_add_options --with-ccache=sccache
+# export SCCACHE_DIR="$HOME/.cache/sccache"
+# export SCCACHE_CACHE_SIZE="50G"
  
+ac_add_options RUSTFLAGS="-Awarnings"
+ac_add_options --enable-bootstrap=no-update
 ac_add_options --allow-addon-sideload
 ac_add_options --disable-crashreporter
 ac_add_options --disable-backgroundtasks

@@ -1,5 +1,5 @@
 diff --git a/gfx/thebes/gfxPlatformFontList.cpp b/gfx/thebes/gfxPlatformFontList.cpp
-index 3128b88f75cf..5322d2538849 100644
+index aa0aa929f1..0962900408 100644
 --- a/gfx/thebes/gfxPlatformFontList.cpp
 +++ b/gfx/thebes/gfxPlatformFontList.cpp
 @@ -13,6 +13,7 @@
@@ -10,7 +10,7 @@ index 3128b88f75cf..5322d2538849 100644
  
  #include "GeckoProfiler.h"
  #include "nsCRT.h"
-@@ -306,6 +307,16 @@ gfxPlatformFontList::gfxPlatformFontList(bool aNeedFullnamePostscriptNames)
+@@ -309,6 +310,17 @@ gfxPlatformFontList::gfxPlatformFontList(bool aNeedFullnamePostscriptNames)
  
    mFontPrefs = MakeUnique<FontPrefs>();
  
@@ -24,26 +24,26 @@ index 3128b88f75cf..5322d2538849 100644
 +                        });
 +    Preferences::SetCString(kFontSystemWhitelistPref, fontValuesJoined.data());
 +  }
++
    gfxFontUtils::GetPrefsFontList(kFontSystemWhitelistPref, mEnabledFontsList);
    mFontFamilyWhitelistActive = !mEnabledFontsList.IsEmpty();
  
 diff --git a/gfx/thebes/moz.build b/gfx/thebes/moz.build
-index 14cdaf80524b..0b74d03010c3 100644
+index ea2e2cca6a..8b930b8b9e 100644
 --- a/gfx/thebes/moz.build
 +++ b/gfx/thebes/moz.build
-@@ -303,3 +303,6 @@ DEFINES["GRAPHITE2_STATIC"] = True
+@@ -299,3 +299,6 @@ DEFINES["GRAPHITE2_STATIC"] = True
  CXXFLAGS += ["-Werror=switch"]
  
  include("/tools/fuzzing/libfuzzer-config.mozbuild")
 +
 +# DOM Mask
 +LOCAL_INCLUDES += ["/camoucfg"]
-\ No newline at end of file
 diff --git a/layout/style/FontFace.cpp b/layout/style/FontFace.cpp
-index 20769bf37876..0036e00ca141 100644
+index ec69197ff1..bfb6060d49 100644
 --- a/layout/style/FontFace.cpp
 +++ b/layout/style/FontFace.cpp
-@@ -243,7 +243,16 @@ void FontFace::SetSizeAdjust(const nsACString& aValue, ErrorResult& aRv) {
+@@ -241,7 +241,16 @@ void FontFace::SetSizeAdjust(const nsACString& aValue, ErrorResult& aRv) {
    mImpl->SetSizeAdjust(aValue, aRv);
  }
  
@@ -61,7 +61,7 @@ index 20769bf37876..0036e00ca141 100644
  
  Promise* FontFace::Load(ErrorResult& aRv) {
    EnsurePromise();
-@@ -253,7 +262,17 @@ Promise* FontFace::Load(ErrorResult& aRv) {
+@@ -251,7 +260,16 @@ Promise* FontFace::Load(ErrorResult& aRv) {
      return nullptr;
    }
  
@@ -74,17 +74,16 @@ index 20769bf37876..0036e00ca141 100644
 +    mLoaded->MaybeResolve(this);
 +  } else {
 +    // For non-allowed fonts, always reject the promise
-+    mLoaded->MaybeReject(NS_ERROR_FAILURE);
++    MaybeReject(FontFaceLoadedRejectReason::Network, nsCString());
 +  }
-+
    return mLoaded;
  }
  
 diff --git a/layout/style/FontFaceImpl.cpp b/layout/style/FontFaceImpl.cpp
-index 8e2e335e846c..c0b51b1b46da 100644
+index 31def99ff3..fa853c7d86 100644
 --- a/layout/style/FontFaceImpl.cpp
 +++ b/layout/style/FontFaceImpl.cpp
-@@ -358,21 +358,15 @@ void FontFaceImpl::DoLoad() {
+@@ -360,21 +360,15 @@ void FontFaceImpl::DoLoad() {
  void FontFaceImpl::SetStatus(FontFaceLoadStatus aStatus) {
    gfxFontUtils::AssertSafeThreadOrServoFontMetricsLocked();
  
@@ -113,17 +112,17 @@ index 8e2e335e846c..c0b51b1b46da 100644
      mFontFaceSet->OnFontFaceStatusChanged(this);
    }
 diff --git a/layout/style/FontFaceImpl.h b/layout/style/FontFaceImpl.h
-index 40e21584bb31..aded3c364079 100644
+index c677d2c40f..229a3780f6 100644
 --- a/layout/style/FontFaceImpl.h
 +++ b/layout/style/FontFaceImpl.h
-@@ -8,6 +8,7 @@
- #define mozilla_dom_FontFaceImpl_h
- 
- #include "mozilla/dom/FontFaceBinding.h"
-+#include "MaskConfig.hpp"
- #include "mozilla/FontPropertyTypes.h"
- #include "mozilla/RWLock.h"
+@@ -13,6 +13,7 @@
  #include "mozilla/ServoStyleConsts.h"
+ #include "mozilla/dom/FontFaceBinding.h"
+ #include "nsTHashSet.h"
++#include "MaskConfig.hpp"
+ 
+ class gfxFontFaceBufferSource;
+ 
 @@ -32,6 +33,20 @@ class UTF8StringOrArrayBufferOrArrayBufferView;
  
  namespace mozilla::dom {
@@ -146,13 +145,16 @@ index 40e21584bb31..aded3c364079 100644
    NS_INLINE_DECL_THREADSAFE_REFCOUNTING(FontFaceImpl)
  
 diff --git a/layout/style/moz.build b/layout/style/moz.build
-index 4d01bfbda3d9..eb51b445451a 100644
+index cc36b4a37a..9a3b635f22 100644
 --- a/layout/style/moz.build
 +++ b/layout/style/moz.build
-@@ -360,3 +360,6 @@ if CONFIG["COMPILE_ENVIRONMENT"]:
-         "ServoStyleConsts.h",
-         inputs=["/servo/ports/geckolib", "/servo/components/style"],
-     )
-+
+@@ -340,6 +340,9 @@ GeneratedFile(
+     inputs=["ServoCSSPropList.mako.py"],
+ )
+ 
 +# DOM Mask
 +LOCAL_INCLUDES += ["/camoucfg"]
++
+ if CONFIG["COMPILE_ENVIRONMENT"]:
+     EXPORTS.mozilla += [
+         "!CompositorAnimatableProperties.h",

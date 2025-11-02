@@ -2,7 +2,9 @@ include upstream.sh
 export
 
 cf_source_dir := camoufox-$(version)-$(release)
+cf_previous_source_dir := camoufox-$(previous_version)
 ff_source_tarball := firefox-$(version).source.tar.xz
+ff_previous_source_tarball := firefox-$(previous_version).source.tar.xz
 ff_repo := git@github.com:mozilla-firefox/firefox.git
 
 debs := python3 python3-dev python3-pip p7zip-full golang-go msitools wget aria2
@@ -11,7 +13,7 @@ pacman := python python-pip p7zip go msitools wget aria2
 
 .PHONY: help fetch setup setup-minimal clean set-target distclean build package \
         build-launcher check-arch revert revert-checkpoint retag-baseline copy-additions edits run setup-local-dev bootstrap mozbootstrap dir \
-        package-linux package-macos package-windows vcredist_arch patch unpatch \
+        package-linux package-macos package-windows vcredist_arch patch unpatch test-patches \
         workspace check-arg edit-cfg ff-dbg tests tests-parallel update-ubo-assets tagged-checkpoint \
         git-fetch git-dir git-bootstrap check-not-git
 
@@ -21,6 +23,7 @@ help:
 	@echo "Tarball Workflow (original):"
 	@echo "  fetch           - Fetch Firefox source tarball"
 	@echo "  setup           - Setup Camoufox & local git repo for development"
+	@echo "  setup-previous  - Setup Camoufox & local git repo for development (previous version)"
 	@echo "  dir             - Prepare source & apply patches"
 	@echo "  bootstrap       - Set up build environment"
 	@echo ""
@@ -40,6 +43,7 @@ help:
 	@echo "  workspace       - Sets the workspace to a patch, assuming its applied"
 	@echo "  patch           - Apply a patch"
 	@echo "  unpatch         - Remove a patch"
+	@echo "  test-patches    - Test all patches and report failures"
 	@echo ""
 	@echo "Building:"
 	@echo "  build           - Build Camoufox"
@@ -86,6 +90,23 @@ fetch:
 	# Fetching the Firefox source tarball...
 	aria2c -x16 -s16 -k1M -o $(ff_source_tarball) "https://archive.mozilla.org/pub/firefox/releases/$(version)/source/firefox-$(version).source.tar.xz"; \
 
+setup-previous:
+	# Note: Only docker containers are intended to run this directly.
+	# Run this before `make dir` or `make build` to avoid setting up a local git repo.
+	if [ ! -f $(ff_previous_source_tarball) ]; then \
+		aria2c -x16 -s16 -k1M -o $(ff_previous_source_tarball) "https://archive.mozilla.org/pub/firefox/releases/$(previous_version)/source/firefox-$(previous_version).source.tar.xz"; \
+	fi
+	# Create new cf_previous_source_dir
+	rm -rf $(cf_previous_source_dir)
+	mkdir -p $(cf_previous_source_dir)
+	tar -xJf $(ff_previous_source_tarball) -C $(cf_previous_source_dir) --strip-components=1
+	# Copy settings & additions
+	cd $(cf_previous_source_dir) && bash ../scripts/copy-additions.sh $(previous_version) $(previous_release) && \
+		git init -b main && \
+		git add -f -A && \
+		git commit -m "Initial commit" && \
+		git tag -a unpatched -m "Initial commit"
+
 setup-minimal:
 	# Note: Only docker containers are intended to run this directly.
 	# Run this before `make dir` or `make build` to avoid setting up a local git repo.
@@ -118,6 +139,9 @@ ff-dbg: setup
 
 revert:
 	cd $(cf_source_dir) && git reset --hard unpatched && rm -f _READY browser/app/camoufox.exe.manifest
+
+revert-previous:
+	cd $(cf_previous_source_dir) && git reset --hard unpatched && rm -f _READY browser/app/camoufox.exe.manifest
 
 revert-checkpoint:
 	cd $(cf_source_dir) && git reset --hard checkpoint && rm -f _READY browser/app/camoufox.exe.manifest
@@ -387,6 +411,51 @@ workspace:
 	fi
 	make checkpoint || true
 	make patch $(_ARGS)
+
+test-patches:
+	@if [ ! -d $(cf_source_dir) ]; then \
+		echo "Error: Source directory $(cf_source_dir) not found."; \
+		echo "Run 'make setup' or 'make git-fetch && make git-dir' first."; \
+		exit 1; \
+	fi
+	@echo "Testing all patches in ./patches directory..."
+	@echo ""
+	@failed_patches=""; \
+	total=0; \
+	passed=0; \
+	failed=0; \
+	for patch_file in $$(find ./patches -name "*.patch" -type f | sort); do \
+		total=$$((total + 1)); \
+		patch_name=$$(basename $$patch_file); \
+		printf "Testing %-50s ... " "$$patch_name"; \
+		if (cd $(cf_source_dir) && patch -p1 --dry-run --force --silent -i ../$$patch_file) > /dev/null 2>&1; then \
+			echo "✓ OK"; \
+			passed=$$((passed + 1)); \
+		else \
+			echo "✗ FAILED"; \
+			failed=$$((failed + 1)); \
+			failed_patches="$$failed_patches$$patch_file\n"; \
+		fi; \
+	done; \
+	echo ""; \
+	echo "========================================"; \
+	echo "Test Results:"; \
+	echo "  Total patches: $$total"; \
+	echo "  Passed: $$passed"; \
+	echo "  Failed: $$failed"; \
+	echo "========================================"; \
+	if [ $$failed -gt 0 ]; then \
+		echo ""; \
+		echo "Failed patches:"; \
+		echo "----------------------------------------"; \
+		printf "$$failed_patches"; \
+		echo "========================================"; \
+	else \
+		echo ""; \
+		echo "✓ All patches passed!"; \
+	fi
+	@$(MAKE) revert
+	@echo "Reverted to unpatchedw"
 
 tests:
 	cd ./tests && \

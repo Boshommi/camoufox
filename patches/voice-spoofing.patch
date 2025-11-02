@@ -1,28 +1,27 @@
 diff --git a/dom/media/webspeech/synth/moz.build b/dom/media/webspeech/synth/moz.build
-index 2cf19982b2..dcdcdb5cbf 100644
+index 665030f5ca..5c20c9f0fb 100644
 --- a/dom/media/webspeech/synth/moz.build
 +++ b/dom/media/webspeech/synth/moz.build
-@@ -63,3 +63,6 @@ FINAL_LIBRARY = "xul"
+@@ -62,3 +62,6 @@ FINAL_LIBRARY = "xul"
  LOCAL_INCLUDES += [
      "ipc",
  ]
 +
 +# DOM Mask
 +LOCAL_INCLUDES += ['/camoucfg']
-\ No newline at end of file
 diff --git a/dom/media/webspeech/synth/nsSynthVoiceRegistry.cpp b/dom/media/webspeech/synth/nsSynthVoiceRegistry.cpp
-index e5a1353d6b..4a4a5b080b 100644
+index 8ef814a009..5951aa502d 100644
 --- a/dom/media/webspeech/synth/nsSynthVoiceRegistry.cpp
 +++ b/dom/media/webspeech/synth/nsSynthVoiceRegistry.cpp
-@@ -27,6 +27,7 @@
- 
- #include "SpeechSynthesisChild.h"
- #include "SpeechSynthesisParent.h"
+@@ -26,6 +26,7 @@
+ #include "nsServiceManagerUtils.h"
+ #include "nsSpeechTask.h"
+ #include "nsString.h"
 +#include "MaskConfig.hpp"
  
  using mozilla::intl::LocaleService;
  
-@@ -169,6 +170,20 @@ nsSynthVoiceRegistry* nsSynthVoiceRegistry::GetInstance() {
+@@ -168,6 +169,20 @@ nsSynthVoiceRegistry* nsSynthVoiceRegistry::GetInstance() {
        // Start up all speech synth services.
        NS_CreateServicesFromCategory(NS_SPEECH_SYNTH_STARTED, nullptr,
                                      NS_SPEECH_SYNTH_STARTED);
@@ -43,7 +42,7 @@ index e5a1353d6b..4a4a5b080b 100644
      }
    }
  
-@@ -305,6 +320,8 @@ nsSynthVoiceRegistry::AddVoice(nsISpeechService* aService,
+@@ -304,6 +319,8 @@ nsSynthVoiceRegistry::AddVoice(nsISpeechService* aService,
      return NS_ERROR_NOT_AVAILABLE;
    }
  
@@ -52,7 +51,7 @@ index e5a1353d6b..4a4a5b080b 100644
    return AddVoiceImpl(aService, aUri, aName, aLang, aLocalService,
                        aQueuesUtterances);
  }
-@@ -779,6 +796,35 @@ void nsSynthVoiceRegistry::SpeakImpl(VoiceData* aVoice, nsSpeechTask* aTask,
+@@ -778,6 +795,35 @@ void nsSynthVoiceRegistry::SpeakImpl(VoiceData* aVoice, nsSpeechTask* aTask,
         NS_ConvertUTF16toUTF8(aText).get(),
         NS_ConvertUTF16toUTF8(aVoice->mUri).get(), aRate, aPitch));
  
