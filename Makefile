@@ -138,10 +138,10 @@ ff-dbg: setup
 	make build
 
 revert:
-	cd $(cf_source_dir) && git reset --hard unpatched && rm -f _READY browser/app/camoufox.exe.manifest
+	cd $(cf_source_dir) && git reset --hard unpatched && git clean -fd && rm -f _READY browser/app/camoufox.exe.manifest
 
 revert-previous:
-	cd $(cf_previous_source_dir) && git reset --hard unpatched && rm -f _READY browser/app/camoufox.exe.manifest
+	cd $(cf_previous_source_dir) && git reset --hard unpatched && git clean -fd && rm -f _READY browser/app/camoufox.exe.manifest
 
 revert-checkpoint:
 	cd $(cf_source_dir) && git reset --hard checkpoint && rm -f _READY browser/app/camoufox.exe.manifest
