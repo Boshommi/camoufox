@@ -1,0 +1,239 @@
+diff --git a/dom/base/Navigator.cpp b/dom/base/Navigator.cpp
+index 233e613886..301c9ebe00 100644
+--- a/dom/base/Navigator.cpp
++++ b/dom/base/Navigator.cpp
+@@ -17,6 +17,7 @@
+ #include "mozilla/dom/BodyExtractor.h"
+ #include "mozilla/dom/FetchBinding.h"
+ #include "mozilla/dom/File.h"
++#include "MaskConfig.hpp"
+ #include "nsCharSeparatedTokenizer.h"
+ #include "nsContentPolicyUtils.h"
+ #include "nsContentUtils.h"
+@@ -1867,6 +1868,13 @@ already_AddRefed<Promise> Navigator::RequestMIDIAccess(
+ }
+ 
+ network::Connection* Navigator::GetConnection(ErrorResult& aRv) {
++  // Check if net-info-api is explicitly disabled
++  if (auto value = MaskConfig::GetBool("net-info-api")) {
++    if (!value.value()) {
++      return nullptr;
++    }
++  }
++  
+   if (!mConnection) {
+     if (!mWindow) {
+       aRv.Throw(NS_ERROR_UNEXPECTED);
+diff --git a/dom/base/moz.build b/dom/base/moz.build
+index aab9201540..3fea1112b6 100644
+--- a/dom/base/moz.build
++++ b/dom/base/moz.build
+@@ -578,6 +578,7 @@ LOCAL_INCLUDES += [
+     "../events",
+     "../media",
+     "../network",
++    "/camoucfg",
+     "/caps",
+     "/docshell/base",
+     "/dom/base",
+diff --git a/dom/network/Connection.cpp b/dom/network/Connection.cpp
+index 9f50316cee..4bb6529bee 100644
+--- a/dom/network/Connection.cpp
++++ b/dom/network/Connection.cpp
+@@ -10,12 +10,15 @@
+ #include "ConnectionWorker.h"
+ #include "Constants.h"
+ #include "mozilla/dom/WorkerPrivate.h"
++#include "MaskConfig.hpp"
++#include <limits>
+ 
+ /**
+  * We have to use macros here because our leak analysis tool things we are
+  * leaking strings when we have |static const nsString|. Sad :(
+  */
+ #define CHANGE_EVENT_NAME u"typechange"_ns
++#define CHANGE_EVENT_NAME_NEW u"change"_ns
+ 
+ namespace mozilla::dom::network {
+ 
+@@ -53,6 +56,66 @@ JSObject* Connection::WrapObject(JSContext* aCx,
+   return NetworkInformation_Binding::Wrap(aCx, this, aGivenProto);
+ }
+ 
++ConnectionType Connection::Type() const {
++  if (auto value = MaskConfig::GetString("net-info-api:type")) {
++    std::string typeStr = value.value();
++    if (typeStr == "cellular") return ConnectionType::Cellular;
++    if (typeStr == "bluetooth") return ConnectionType::Bluetooth;
++    if (typeStr == "ethernet") return ConnectionType::Ethernet;
++    if (typeStr == "wifi") return ConnectionType::Wifi;
++    if (typeStr == "other") return ConnectionType::Other;
++    if (typeStr == "none") return ConnectionType::None;
++    if (typeStr == "unknown") return ConnectionType::Unknown;
++  }
++  return mShouldResistFingerprinting
++             ? static_cast<ConnectionType>(ConnectionType::Unknown)
++             : mType;
++}
++
++EffectiveConnectionType Connection::EffectiveType() const {
++  if (auto value = MaskConfig::GetString("net-info-api:effectiveType")) {
++    std::string typeStr = value.value();
++    if (typeStr == "slow-2g") return EffectiveConnectionType::Slow_2g;
++    if (typeStr == "2g") return EffectiveConnectionType::_2g;
++    if (typeStr == "3g") return EffectiveConnectionType::_3g;
++    if (typeStr == "4g") return EffectiveConnectionType::_4g;
++  }
++  // Default to 4g
++  return EffectiveConnectionType::_4g;
++}
++
++double Connection::DownlinkMax() const {
++  if (auto value = MaskConfig::GetDouble("net-info-api:downlinkMax")) {
++    return value.value();
++  }
++  // Default to infinity (unrestricted)
++  return std::numeric_limits<double>::infinity();
++}
++
++double Connection::Downlink() const {
++  if (auto value = MaskConfig::GetDouble("net-info-api:downlink")) {
++    return value.value();
++  }
++  // Default to 10 Mbps
++  return 10.0;
++}
++
++double Connection::Rtt() const {
++  if (auto value = MaskConfig::GetDouble("net-info-api:rtt")) {
++    return value.value();
++  }
++  // Default to 50ms
++  return 50.0;
++}
++
++bool Connection::SaveData() const {
++  if (auto value = MaskConfig::GetBool("net-info-api:saveData")) {
++    return value.value();
++  }
++  // Default to false
++  return false;
++}
++
+ void Connection::Update(ConnectionType aType, bool aIsWifi,
+                         uint32_t aDHCPGateway, bool aNotify) {
+   NS_ASSERT_OWNINGTHREAD(Connection);
+@@ -65,6 +128,7 @@ void Connection::Update(ConnectionType aType, bool aIsWifi,
+ 
+   if (aNotify && previousType != aType && !mShouldResistFingerprinting) {
+     DispatchTrustedEvent(CHANGE_EVENT_NAME);
++    DispatchTrustedEvent(CHANGE_EVENT_NAME_NEW);
+   }
+ }
+ 
+diff --git a/dom/network/Connection.h b/dom/network/Connection.h
+index 9d18ad089b..7dca766c87 100644
+--- a/dom/network/Connection.h
++++ b/dom/network/Connection.h
+@@ -40,11 +40,12 @@ class Connection : public DOMEventTargetHelper {
+   virtual JSObject* WrapObject(JSContext* aCx,
+                                JS::Handle<JSObject*> aGivenProto) override;
+ 
+-  ConnectionType Type() const {
+-    return mShouldResistFingerprinting
+-               ? static_cast<ConnectionType>(ConnectionType::Unknown)
+-               : mType;
+-  }
++  ConnectionType Type() const;
++  EffectiveConnectionType EffectiveType() const;
++  double DownlinkMax() const;
++  double Downlink() const;
++  double Rtt() const;
++  bool SaveData() const;
+ 
+   bool GetIsWifi() const {
+     NS_ASSERT_OWNINGTHREAD(Connection);
+@@ -58,6 +59,7 @@ class Connection : public DOMEventTargetHelper {
+   }
+ 
+   IMPL_EVENT_HANDLER(typechange)
++  IMPL_EVENT_HANDLER(change)
+ 
+  protected:
+   Connection(nsPIDOMWindowInner* aWindow, bool aShouldResistFingerprinting);
+diff --git a/dom/network/moz.build b/dom/network/moz.build
+index 7b7e174a6d..fd7396534a 100644
+--- a/dom/network/moz.build
++++ b/dom/network/moz.build
+@@ -53,3 +53,6 @@ IPDL_SOURCES += [
+ include("/ipc/chromium/chromium-config.mozbuild")
+ 
+ FINAL_LIBRARY = "xul"
++
++# Camoufox MaskConfig
++LOCAL_INCLUDES += ["/camoucfg"]
+diff --git a/dom/webidl/NetworkInformation.webidl b/dom/webidl/NetworkInformation.webidl
+index 2020044d2e..135b4814c6 100644
+--- a/dom/webidl/NetworkInformation.webidl
++++ b/dom/webidl/NetworkInformation.webidl
+@@ -18,9 +18,22 @@ enum ConnectionType {
+     "unknown"
+ };
+ 
++enum EffectiveConnectionType {
++    "slow-2g",
++    "2g",
++    "3g",
++    "4g"
++};
++
+ [Pref="dom.netinfo.enabled",
+  Exposed=(Window,Worker)]
+ interface NetworkInformation : EventTarget {
+     readonly    attribute ConnectionType type;
++    readonly    attribute EffectiveConnectionType effectiveType;
++    readonly    attribute unrestricted double downlinkMax;
++    readonly    attribute unrestricted double downlink;
++    readonly    attribute unrestricted double rtt;
++    readonly    attribute boolean saveData;
+                 attribute EventHandler   ontypechange;
++                attribute EventHandler   onchange;
+ };
+diff --git a/dom/workers/WorkerNavigator.cpp b/dom/workers/WorkerNavigator.cpp
+index 622724b529..4e664a720b 100644
+--- a/dom/workers/WorkerNavigator.cpp
++++ b/dom/workers/WorkerNavigator.cpp
+@@ -24,6 +24,7 @@
+ #include "mozilla/dom/WorkerStatus.h"
+ #include "mozilla/dom/network/Connection.h"
+ #include "mozilla/webgpu/Instance.h"
++#include "MaskConfig.hpp"
+ #include "nsCOMPtr.h"
+ #include "nsDebug.h"
+ #include "nsError.h"
+@@ -247,6 +248,13 @@ StorageManager* WorkerNavigator::Storage() {
+ }
+ 
+ network::Connection* WorkerNavigator::GetConnection(ErrorResult& aRv) {
++  // Check if net-info-api is explicitly disabled
++  if (auto value = MaskConfig::GetBool("net-info-api")) {
++    if (!value.value()) {
++      return nullptr;
++    }
++  }
++  
+   if (!mConnection) {
+     WorkerPrivate* workerPrivate = GetCurrentThreadWorkerPrivate();
+     MOZ_ASSERT(workerPrivate);
+diff --git a/dom/workers/moz.build b/dom/workers/moz.build
+index 2f2948a729..2f5b0a9f1e 100644
+--- a/dom/workers/moz.build
++++ b/dom/workers/moz.build
+@@ -80,6 +80,7 @@ UNIFIED_SOURCES += [
+ ]
+ 
+ LOCAL_INCLUDES += [
++    "/camoucfg",
+     "/caps",
+     "/dom/base",
+     "/dom/bindings",
