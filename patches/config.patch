@@ -1,8 +1,8 @@
 diff --git a/browser/installer/package-manifest.in b/browser/installer/package-manifest.in
-index bb0f71dd60..3ad3d84b82 100644
+index 96c6db46c6..e53918a1b7 100644
 --- a/browser/installer/package-manifest.in
 +++ b/browser/installer/package-manifest.in
-@@ -244,6 +244,11 @@
+@@ -242,6 +242,11 @@
  #endif
  #endif
  
@@ -15,7 +15,7 @@ index bb0f71dd60..3ad3d84b82 100644
  ; All the pref files must be part of base to prevent migration bugs
  @RESPATH@/browser/@PREF_DIR@/firefox.js
 diff --git a/lw/moz.build b/lw/moz.build
-index e69de29bb2..208184547e 100644
+index e69de29bb2..77874d877b 100644
 --- a/lw/moz.build
 +++ b/lw/moz.build
 @@ -0,0 +1,14 @@
@@ -34,12 +34,9 @@ index e69de29bb2..208184547e 100644
 +  "local-settings.js",
 +]
 diff --git a/moz.build b/moz.build
-index 9db27fd056..e1ec1dc872 100644
+index 6129aa819d..3c1d77c638 100644
 --- a/moz.build
 +++ b/moz.build
-@@ -220,3 +220,5 @@ SPHINX_TREES["mots"] = "docs/mots"
- SPHINX_TREES["update-infrastructure"] = "docs/update-infrastructure"
- 
- include("build/templates.mozbuild")
+@@ -237,0 +238,2 @@ include("build/templates.mozbuild")
 +
 +DIRS += ["lw"]
