@@ -176,7 +176,7 @@ diff --git a/dom/webidl/NetworkInformation.webidl b/dom/webidl/NetworkInformatio
 index 2020044d2e..135b4814c6 100644
 --- a/dom/webidl/NetworkInformation.webidl
 +++ b/dom/webidl/NetworkInformation.webidl
-@@ -18,9 +18,22 @@ enum ConnectionType {
+@@ -18,9 +18,21 @@ enum ConnectionType {
      "unknown"
  };
  
@@ -187,8 +187,9 @@ index 2020044d2e..135b4814c6 100644
 +    "4g"
 +};
 +
- [Pref="dom.netinfo.enabled",
-  Exposed=(Window,Worker)]
+-[Pref="dom.netinfo.enabled",
+- Exposed=(Window,Worker)]
++[Exposed=(Window,Worker)]
  interface NetworkInformation : EventTarget {
      readonly    attribute ConnectionType type;
 +    readonly    attribute EffectiveConnectionType effectiveType;
@@ -196,8 +197,22 @@ index 2020044d2e..135b4814c6 100644
 +    readonly    attribute unrestricted double downlink;
 +    readonly    attribute unrestricted double rtt;
 +    readonly    attribute boolean saveData;
-                 attribute EventHandler   ontypechange;
-+                attribute EventHandler   onchange;
+     attribute EventHandler   ontypechange;
++    attribute EventHandler   onchange;
+ };
+diff --git a/dom/webidl/Navigator.webidl b/dom/webidl/Navigator.webidl
+index 4b40a43c89..c3f0f632c1 100644
+--- a/dom/webidl/Navigator.webidl
++++ b/dom/webidl/Navigator.webidl
+@@ -202,8 +202,8 @@ partial interface Navigator {
+   readonly attribute AddonManager mozAddonManager;
+ };
+ 
+ // NetworkInformation
+ partial interface Navigator {
+-  [Throws, Pref="dom.netinfo.enabled"]
++  [Throws]
+   readonly attribute NetworkInformation connection;
  };
 diff --git a/dom/workers/WorkerNavigator.cpp b/dom/workers/WorkerNavigator.cpp
 index 622724b529..4e664a720b 100644
@@ -225,6 +240,17 @@ index 622724b529..4e664a720b 100644
    if (!mConnection) {
      WorkerPrivate* workerPrivate = GetCurrentThreadWorkerPrivate();
      MOZ_ASSERT(workerPrivate);
+
+diff --git a/dom/webidl/WorkerNavigator.webidl b/dom/webidl/WorkerNavigator.webidl
+--- a/dom/webidl/WorkerNavigator.webidl
++++ b/dom/webidl/WorkerNavigator.webidl
+@@ -18,5 +18,5 @@ [Exposed=Worker]
+ [Exposed=Worker]
+ partial interface WorkerNavigator {
+-    [Pref="dom.netinfo.enabled", Throws]
++    [Throws]
+     readonly attribute NetworkInformation connection;
+ };
 diff --git a/dom/workers/moz.build b/dom/workers/moz.build
 index 2f2948a729..2f5b0a9f1e 100644
 --- a/dom/workers/moz.build
@@ -237,3 +263,13 @@ index 2f2948a729..2f5b0a9f1e 100644
      "/caps",
      "/dom/base",
      "/dom/bindings",
+diff --git a/modules/libpref/init/StaticPrefList.yaml b/modules/libpref/init/StaticPrefList.yaml
+index 8d5f32df3f..65f38f7ab1 100644
+--- a/modules/libpref/init/StaticPrefList.yaml
++++ b/modules/libpref/init/StaticPrefList.yaml
+@@ -3696,7 +3696,7 @@
+ - name: dom.netinfo.enabled
+   type: RelaxedAtomicBool
+-  value: false
++  value: true
+   mirror: always
