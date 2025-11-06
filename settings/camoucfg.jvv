@@ -34,6 +34,7 @@
     "navigator.doNotTrack": "str[0, 1, unspecified]",
     "navigator.hardwareConcurrency": "int[>0]",
     "navigator.maxTouchPoints": "int[>=0]",
+    "navigator.plugins": "array[@PLUGIN]",
     "navigator.cookieEnabled": "bool",
     "navigator.globalPrivacyControl": "bool",
     "navigator.onLine": "bool",
@@ -69,11 +70,23 @@
 
     "@IPV4": "str[/^(?:[0-9]{1,3}\\.){3}[0-9]{1,3}$/]",
     "@IPV6": "str[/^(([0-9a-fA-F]{0,4}:){1,7}[0-9a-fA-F]{0,4})$/]",
+    "@PLUGIN": {
+        "*name": "str",
+        "description": "str | nil",
+        "filename": "str | nil",
+        "mimeTypes": "array[@PLUGIN_MIME]"
+    },
+    "@PLUGIN_MIME": {
+        "*type": "str",
+        "description": "str | nil",
+        "suffixes": "str | nil"
+    },
 
     "battery:charging$__BATTERY": "bool",
     "battery:chargingTime$__BATTERY": "double[>=0]",
     "battery:dischargingTime$__BATTERY": "double[>=0]",
     "battery:level$__BATTERY": "double[>0]",
+    "battery": "bool",
 
     "fonts": "array[str]",
     "fonts:spacing_seed": "int[>=0]",

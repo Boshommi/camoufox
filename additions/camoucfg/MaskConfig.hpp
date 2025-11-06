@@ -18,12 +18,45 @@ Written by daijro.
 #include <cstddef>
 #include <vector>
 #include <algorithm>
+#include <unordered_map>
 
 #ifdef _WIN32
 #  include <windows.h>
 #endif
 
 namespace MaskConfig {
+
+inline std::unordered_map<std::string, nlohmann::json>& RuntimeOverrides() {
+  static std::unordered_map<std::string, nlohmann::json> overrides;
+  return overrides;
+}
+
+inline std::mutex& RuntimeMutex() {
+  static std::mutex runtimeMutex;
+  return runtimeMutex;
+}
+
+inline std::optional<nlohmann::json> GetOverrideValue(
+    const std::string& key) {
+  std::lock_guard<std::mutex> lock(RuntimeMutex());
+  auto& overrides = RuntimeOverrides();
+  auto it = overrides.find(key);
+  if (it == overrides.end()) {
+    return std::nullopt;
+  }
+  return it->second;
+}
+
+inline void SetOverrideValue(const std::string& key,
+                             const std::optional<nlohmann::json>& value) {
+  std::lock_guard<std::mutex> lock(RuntimeMutex());
+  auto& overrides = RuntimeOverrides();
+  if (value.has_value()) {
+    overrides[key] = value.value();
+  } else {
+    overrides.erase(key);
+  }
+}
 
 // Function to get the value of an environment variable as a UTF-8 string.
 inline std::optional<std::string> get_env_utf8(const std::string& name) {
@@ -92,9 +125,32 @@ inline bool HasKey(const std::string& key, const nlohmann::json& data) {
 }
 
 inline std::optional<std::string> GetString(const std::string& key) {
+  if (auto override = GetOverrideValue(key)) {
+    if (override->is_null()) {
+      return std::nullopt;
+    }
+    if (override->is_string()) {
+      return override->get<std::string>();
+    }
+    printf_stderr("ERROR: Override for key '%s' is not a string\n",
+                  key.c_str());
+    return std::nullopt;
+  }
   const auto& data = GetJson();
   if (!HasKey(key, data)) return std::nullopt;
   return data[key].get<std::string>();
+}
+
+inline std::optional<nlohmann::json> GetJsonValue(const std::string& key) {
+  if (auto override = GetOverrideValue(key)) {
+    if (override->is_null()) {
+      return std::nullopt;
+    }
+    return override;
+  }
+  const auto& data = GetJson();
+  if (!HasKey(key, data)) return std::nullopt;
+  return data[key];
 }
 
 inline std::vector<std::string> GetStringList(const std::string& key) {
@@ -143,6 +199,18 @@ inline std::optional<int32_t> GetInt32(const std::string& key) {
 }
 
 inline std::optional<double> GetDouble(const std::string& key) {
+  if (auto override = GetOverrideValue(key)) {
+    if (override->is_null()) {
+      return std::nullopt;
+    }
+    if (override->is_number_float() || override->is_number_integer() ||
+        override->is_number_unsigned()) {
+      return override->get<double>();
+    }
+    printf_stderr("ERROR: Override for key '%s' is not a double\n",
+                  key.c_str());
+    return std::nullopt;
+  }
   const auto& data = GetJson();
   if (!HasKey(key, data)) return std::nullopt;
   if (data[key].is_number_float()) return data[key].get<double>();
@@ -153,6 +221,17 @@ inline std::optional<double> GetDouble(const std::string& key) {
 }
 
 inline std::optional<bool> GetBool(const std::string& key) {
+  if (auto override = GetOverrideValue(key)) {
+    if (override->is_null()) {
+      return std::nullopt;
+    }
+    if (override->is_boolean()) {
+      return override->get<bool>();
+    }
+    printf_stderr("ERROR: Override for key '%s' is not a boolean\n",
+                  key.c_str());
+    return std::nullopt;
+  }
   const auto& data = GetJson();
   if (!HasKey(key, data)) return std::nullopt;
   if (data[key].is_boolean()) return data[key].get<bool>();
@@ -308,6 +387,24 @@ MVoices() {
         voice["isLocalService"].get<bool>());
   }
   return voices;
+}
+
+inline void SetBool(const std::string& key,
+                    const std::optional<bool>& value) {
+  if (value.has_value()) {
+    SetOverrideValue(key, nlohmann::json(value.value()));
+  } else {
+    SetOverrideValue(key, std::nullopt);
+  }
+}
+
+inline void SetDouble(const std::string& key,
+                      const std::optional<double>& value) {
+  if (value.has_value()) {
+    SetOverrideValue(key, nlohmann::json(value.value()));
+  } else {
+    SetOverrideValue(key, std::nullopt);
+  }
 }
 
 }  // namespace MaskConfig

@@ -157,6 +157,7 @@ Navigator properties can be fully spoofed to other Firefox fingerprints, and it 
 | navigator.product              | ✅    |
 | navigator.productSub           | ✅    |
 | navigator.maxTouchPoints       | ✅    |
+| navigator.plugins              | ✅ (runtime-configurable) |
 | navigator.cookieEnabled        | ✅    |
 | navigator.globalPrivacyControl | ✅    |
 | navigator.appVersion           | ✅    |
@@ -166,6 +167,65 @@ Navigator properties can be fully spoofed to other Firefox fingerprints, and it 
 Camoufox will automatically add the following default fonts associated your spoofed User-Agent OS (the value passed in `navigator.userAgent`).
 
 **Notes**:
+
+### Live Battery Overrides
+
+Camoufox 144 introduces first-class support for Firefox’s Battery Status API, including _runtime_ control of the reported values. You can now toggle the API on/off, or adjust `charging`, `level`, `chargingTime`, and `dischargingTime` while a browsing session is running.
+
+```python
+from camoufox import Camoufox, set_battery
+
+with Camoufox() as browser:
+    # Start a realistic battery state
+    set_battery(browser,
+                enabled=True,
+                charging=False,
+                level=0.58,
+                discharging_time=7200)
+
+    # Flip to "plugged in" later in the session
+    set_battery(browser, charging=True, charging_time=1800)
+```
+
+Using the async API?
+
+```python
+from camoufox import AsyncCamoufox, async_set_battery
+
+async with AsyncCamoufox() as browser:
+    await async_set_battery(browser.contexts[0], level=0.34)
+```
+
+Under the hood these calls update the native `BatteryManager`, fire the appropriate DOM events (`chargingchange`, `levelchange`, etc.), and keep Playwright’s `navigator.getBattery()` resolver in sync. Existing fingerprints that provide `battery:*` keys continue to work; you can layer live overrides on top without regenerating configs.
+
+Pass `None` for a specific field (or call `set_battery` with no keyword arguments) to clear the override and fall back to the fingerprinted defaults.
+
+### Plugin Overrides
+
+Camoufox now supports full control over `navigator.plugins` and the associated `navigator.mimeTypes`. Provide an array of plugin descriptors in your launch config to spoof both the plugin metadata and any MIME types they expose:
+
+```python
+with Camoufox(config={
+    "navigator.plugins": [
+        {
+            "name": "Widevine Content Decryption Module",
+            "description": "Provides DRM video playback support.",
+            "filename": "widevinecdm.dll",
+            "mimeTypes": [
+                "application/x-ppapi-widevine-cdm",
+                {
+                    "type": "application/x-google-chrome-pdf",
+                    "description": "Portable Document Format",
+                    "suffixes": "pdf"
+                }
+            ]
+        }
+    ]
+}) as browser:
+    ...
+```
+
+Each plugin object accepts optional `description`, `filename`, and `mimeTypes` fields. MIME entries can be simple strings (for the type) or objects with explicit `description`/`suffixes`. Omit the key or pass an empty list to suppress plugin exposure entirely; leave it unspecified to fall back to the default PDF viewer bundle. All values are applied at the C++ layer, keeping Playwright, DOM APIs, and anti-bot probes in sync.
 
 - **navigator.webdriver** is set to false at all times.
 - `navigator.language` & `navigator.languages` will fall back to the `locale:language`/`locale:region` values if not set.
@@ -502,6 +562,7 @@ Miscellaneous (battery status, etc)
 | battery:chargingTime    | ✅     | Spoofs the battery charging time.                                                                                               |
 | battery:dischargingTime | ✅     | Spoofs the battery discharging time.                                                                                            |
 | battery:level           | ✅     | Spoofs the battery level.                                                                                                       |
+| battery                 | ✅     | Enables or disables `navigator.getBattery()`. When disabled the promise rejects with a NotSupportedError.                       |
 
 <details>
 <summary>

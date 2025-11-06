@@ -60,6 +60,7 @@ headers:
   Accept-Encoding: headers.Accept-Encoding
 
 battery:
+  enabled: battery
   charging: battery:charging
   chargingTime: battery:chargingTime
   dischargingTime: battery:dischargingTime

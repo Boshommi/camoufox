@@ -25,8 +25,21 @@ with Camoufox(
         ),  # Mbps (use float('inf') for infinity)
         "net-info-api:rtt": 50.0,  # milliseconds
         "net-info-api:saveData": False,  # boolean
+        "battery": True,
+        "battery:charging": True,
+        "battery:chargingTime": 1,
+        "battery:dischargingTime": 1,
+        "battery:level": 0.67,
     },
 ) as browser:
     page = browser.new_page()
     page.goto("https://pixelscan.net/fingerprint-check")
+
+    # set_battery(
+    #     browser,
+    #     enabled=True,
+    #     charging=False,
+    #     level=0.58,
+    #     discharging_time=7200,
+    # )
     time.sleep(1000000)  # import time
