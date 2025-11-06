@@ -10,7 +10,7 @@ from shlex import join
 
 from _mixin import find_src_dir, get_moz_target, list_files, run, temp_cd
 
-UNNEEDED_PATHS = {"uninstall", "pingsender.exe", "pingsender", "vaapitest", "glxtest"}
+UNNEEDED_PATHS = {"uninstall", "pingsender.exe", "pingsender", "vaapitest"}
 
 
 def restore_macos_permissions(app_path):
@@ -44,6 +44,38 @@ def restore_macos_permissions(app_path):
                             exe_path,
                             st.st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH,
                         )
+
+
+def restore_linux_permissions(package_dir):
+    """Restore executable permissions for Linux binaries"""
+    import stat
+
+    if not os.path.exists(package_dir):
+        return
+
+    # Files that need to be executable
+    executables = [
+        "camoufox",
+        "camoufox-bin",
+        "pingsender",
+        "nmhproxy",
+        "crashreporter",
+        "glxtest",
+    ]
+    for exe in executables:
+        exe_path = os.path.join(package_dir, exe)
+        if os.path.exists(exe_path):
+            # Add executable permissions
+            st = os.stat(exe_path)
+            os.chmod(exe_path, st.st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+
+    # Also make any .sh scripts executable
+    for item in os.listdir(package_dir):
+        if item.endswith(".sh"):
+            exe_path = os.path.join(package_dir, item)
+            if os.path.isfile(exe_path):
+                st = os.stat(exe_path)
+                os.chmod(exe_path, st.st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
 
 
 def add_includes_to_package(package_file, includes, fonts, new_file, target):
@@ -142,6 +174,9 @@ def add_includes_to_package(package_file, includes, fonts, new_file, target):
         if target == "macos":
             app_path = os.path.join(temp_dir, "Camoufox.app")
             restore_macos_permissions(app_path)
+        # Restore executable permissions for Linux
+        elif target == "linux":
+            restore_linux_permissions(temp_dir)
 
         # Update package
         # Use zip for macOS to preserve file permissions, 7z for others
