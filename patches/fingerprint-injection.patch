@@ -935,30 +935,30 @@ index 1fd32ac068..3bd4db24d0 100644
  };
 
 diff --git a/dom/base/nsPluginArray.h b/dom/base/nsPluginArray.h
-index 71df3d103b61..7d6f988cbc99 100644
+index 71df3d1..7d6f988 100644
 --- a/dom/base/nsPluginArray.h
 +++ b/dom/base/nsPluginArray.h
 @@ -7,7 +7,6 @@
  #ifndef nsPluginArray_h___
  #define nsPluginArray_h___
-
+ 
 -#include "mozilla/Array.h"
  #include "nsCOMPtr.h"
  #include "nsString.h"
  #include "nsTArray.h"
 @@ -39,7 +38,7 @@ class nsPluginArray final : public nsSupportsWeakReference,
    nsMimeTypeArray* MimeTypeArray() { return mMimeTypeArray; }
-
+ 
    // PluginArray WebIDL methods
 -  uint32_t Length() { return ForceNoPlugins() ? 0 : std::size(mPlugins); }
 +  uint32_t Length() const { return mPlugins.Length(); }
-
+ 
    nsPluginElement* Item(uint32_t aIndex) {
      bool unused;
 @@ -62,11 +61,9 @@ class nsPluginArray final : public nsSupportsWeakReference,
   private:
    virtual ~nsPluginArray();
-
+ 
 -  bool ForceNoPlugins();
 -
    RefPtr<nsMimeTypeArray> mMimeTypeArray;
@@ -966,42 +966,40 @@ index 71df3d103b61..7d6f988cbc99 100644
 -  mozilla::Array<RefPtr<nsPluginElement>, 5> mPlugins;
 +  nsTArray<RefPtr<nsPluginElement>> mPlugins;
  };
-
+ 
  /**
 @@ -79,7 +76,9 @@ class nsPluginElement final : public nsISupports, public nsWrapperCache {
-   NS_DECL_CYCLE_COLLECTING_ISUPPORTS
    NS_DECL_CYCLE_COLLECTION_WRAPPERCACHE_CLASS(nsPluginElement)
-
--  explicit nsPluginElement(nsPluginArray* aPluginArray,
+ 
+   explicit nsPluginElement(nsPluginArray* aPluginArray,
 -                           nsPIDOMWindowInner* aWindow, const nsAString& aName);
-+  explicit nsPluginElement(nsPluginArray* aPluginArray,
 +                           nsPIDOMWindowInner* aWindow, const nsAString& aName,
 +                           const nsAString& aDescription,
 +                           const nsAString& aFilename);
-
+ 
    nsPluginArray* GetParentObject() const;
-
+ 
 @@ -87,9 +86,9 @@ class nsPluginElement final : public nsISupports, public nsWrapperCache {
                                 JS::Handle<JSObject*> aGivenProto) override;
-
+ 
    // Plugin WebIDL methods
 -  void GetDescription(nsString& retval) const { retval = kDescription; }
 +  void GetDescription(nsString& retval) const { retval = mDescription; }
-
+ 
 -  void GetFilename(nsString& retval) const { retval = kFilename; }
 +  void GetFilename(nsString& retval) const { retval = mFilename; }
-
+ 
    void GetName(nsString& retval) const { retval = mName; }
    const nsString& Name() const { return mName; }
 @@ -112,15 +111,11 @@ class nsPluginElement final : public nsISupports, public nsWrapperCache {
-
+ 
    void GetSupportedNames(nsTArray<nsString>& retval);
-
+ 
 +  void AddMimeType(nsMimeType* aMimeType);
 +
   protected:
    virtual ~nsPluginElement() = default;
-
+ 
 -  nsMimeTypeArray* MimeTypeArray() { return mPluginArray->MimeTypeArray(); }
 -
 -  static constexpr nsLiteralString kDescription =
@@ -1019,17 +1017,16 @@ index 71df3d103b61..7d6f988cbc99 100644
 +  nsString mFilename;
 +  nsTArray<RefPtr<nsMimeType>> mMimeTypes;
  };
-
+ 
  #endif /* nsPluginArray_h___ */
-
 diff --git a/dom/base/nsMimeTypeArray.cpp b/dom/base/nsMimeTypeArray.cpp
 index 34f1f16..4e15cde 100644
 --- a/dom/base/nsMimeTypeArray.cpp
 +++ b/dom/base/nsMimeTypeArray.cpp
 @@ -6,7 +6,6 @@
-
+ 
  #include "nsMimeTypeArray.h"
-
+ 
 -#include "mozilla/StaticPrefs_pdfjs.h"
  #include "mozilla/dom/MimeTypeArrayBinding.h"
  #include "mozilla/dom/MimeTypeBinding.h"
@@ -1037,21 +1034,21 @@ index 34f1f16..4e15cde 100644
 @@ -22,12 +21,11 @@ NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(nsMimeTypeArray)
    NS_INTERFACE_MAP_ENTRY(nsISupports)
  NS_INTERFACE_MAP_END
-
+ 
 -NS_IMPL_CYCLE_COLLECTION_WRAPPERCACHE(nsMimeTypeArray, mWindow, mMimeTypes[0],
 -                                      mMimeTypes[1])
 +NS_IMPL_CYCLE_COLLECTION_WRAPPERCACHE(nsMimeTypeArray, mWindow, mMimeTypes)
-
+ 
  nsMimeTypeArray::nsMimeTypeArray(
      nsPIDOMWindowInner* aWindow,
 -    const mozilla::Array<RefPtr<nsMimeType>, 2>& aMimeTypes)
 +    const nsTArray<RefPtr<nsMimeType>>& aMimeTypes)
      : mWindow(aWindow), mMimeTypes(aMimeTypes) {}
-
+ 
  nsMimeTypeArray::~nsMimeTypeArray() = default;
 @@ -43,7 +41,7 @@ nsPIDOMWindowInner* nsMimeTypeArray::GetParentObject() const {
  }
-
+ 
  nsMimeType* nsMimeTypeArray::IndexedGetter(uint32_t aIndex, bool& aFound) {
 -  if (!ForceNoPlugins() && aIndex < std::size(mMimeTypes)) {
 +  if (aIndex < mMimeTypes.Length()) {
@@ -1060,7 +1057,7 @@ index 34f1f16..4e15cde 100644
    }
 @@ -53,11 +51,6 @@ nsMimeType* nsMimeTypeArray::IndexedGetter(uint32_t aIndex, bool& aFound) {
  }
-
+ 
  nsMimeType* nsMimeTypeArray::NamedGetter(const nsAString& aName, bool& aFound) {
 -  if (ForceNoPlugins()) {
 -    aFound = false;
@@ -1072,7 +1069,7 @@ index 34f1f16..4e15cde 100644
        aFound = true;
 @@ -70,21 +63,20 @@ nsMimeType* nsMimeTypeArray::NamedGetter(const nsAString& aName, bool& aFound) {
  }
-
+ 
  void nsMimeTypeArray::GetSupportedNames(nsTArray<nsString>& retval) {
 -  if (ForceNoPlugins()) {
 -    return;
@@ -1082,11 +1079,11 @@ index 34f1f16..4e15cde 100644
      retval.AppendElement(mimeType->Name());
    }
  }
-
+ 
 -bool nsMimeTypeArray::ForceNoPlugins() { return StaticPrefs::pdfjs_disabled(); }
 -
  NS_IMPL_CYCLE_COLLECTION_WRAPPERCACHE(nsMimeType, mPluginElement)
-
+ 
 -nsMimeType::nsMimeType(nsPluginElement* aPluginElement, const nsAString& aName)
 -    : mPluginElement(aPluginElement), mName(aName) {
 +nsMimeType::nsMimeType(nsPluginElement* aPluginElement, const nsAString& aName,
@@ -1109,78 +1106,84 @@ index 4e2f16b..d82563a 100644
    nsMimeTypeArray(nsPIDOMWindowInner* aWindow,
 -                  const mozilla::Array<RefPtr<nsMimeType>, 2>& aMimeTypes);
 +                  const nsTArray<RefPtr<nsMimeType>>& aMimeTypes);
-
+ 
    NS_DECL_CYCLE_COLLECTING_ISUPPORTS
    NS_DECL_CYCLE_COLLECTION_WRAPPERCACHE_CLASS(nsMimeTypeArray)
 @@ -35,7 +35,7 @@ class nsMimeTypeArray final : public nsISupports, public nsWrapperCache {
                                 JS::Handle<JSObject*> aGivenProto) override;
-
+ 
    // MimeTypeArray WebIDL methods
 -  uint32_t Length() { return ForceNoPlugins() ? 0 : std::size(mMimeTypes); }
 +  uint32_t Length() const { return mMimeTypes.Length(); }
-
+ 
    nsMimeType* Item(uint32_t aIndex) {
      bool unused;
 @@ -56,10 +56,8 @@ class nsMimeTypeArray final : public nsISupports, public nsWrapperCache {
   protected:
    virtual ~nsMimeTypeArray();
-
+ 
 -  bool ForceNoPlugins();
 -
    nsCOMPtr<nsPIDOMWindowInner> mWindow;
 -  mozilla::Array<RefPtr<nsMimeType>, 2> mMimeTypes;
 +  nsTArray<RefPtr<nsMimeType>> mMimeTypes;
  };
-
+ 
  /**
 @@ -71,7 +69,8 @@ class nsMimeType final : public nsWrapperCache {
    NS_INLINE_DECL_CYCLE_COLLECTING_NATIVE_REFCOUNTING(nsMimeType)
    NS_DECL_CYCLE_COLLECTION_NATIVE_WRAPPERCACHE_CLASS(nsMimeType)
-
+ 
 -  nsMimeType(nsPluginElement* aPluginElement, const nsAString& aName);
 +  nsMimeType(nsPluginElement* aPluginElement, const nsAString& aName,
 +             const nsAString& aDescription, const nsAString& aSuffixes);
-
+ 
    nsPluginElement* GetParentObject() const { return mPluginElement; }
-
+ 
 @@ -80,13 +79,13 @@ class nsMimeType final : public nsWrapperCache {
-
+ 
    // MimeType WebIDL methods
    void GetDescription(mozilla::dom::DOMString& retval) const {
 -    retval.SetKnownLiveString(kMimeDescription);
 +    retval.AsAString() = mDescription;
    }
-
+ 
    already_AddRefed<nsPluginElement> EnabledPlugin() const;
-
+ 
    void GetSuffixes(mozilla::dom::DOMString& retval) const {
 -    retval.SetKnownLiveString(kMimeSuffix);
 +    retval.AsAString() = mSuffixes;
    }
-
-   void GetType(nsString& retval) const { return mName; }
-@@ -94,11 +93,8 @@ class nsMimeType final : public nsWrapperCache {
+ 
+   void GetType(nsString& retval) const { retval = mName; }
+@@ -95,10 +94,6 @@ class nsMimeType final : public nsWrapperCache {
   protected:
    virtual ~nsMimeType();
-
+ 
 -  static constexpr nsLiteralString kMimeDescription =
 -      u"Portable Document Format"_ns;
 -  static constexpr nsLiteralString kMimeSuffix = u"pdf"_ns;
 -
+   // Note that this creates an explicit reference cycle:
+   //
+   // nsMimeType -> nsPluginElement -> nsPluginArray ->
+@@ -107,6 +102,8 @@ class nsMimeType final : public nsWrapperCache {
+   // We rely on the cycle collector to break this cycle.
    RefPtr<nsPluginElement> mPluginElement;
    nsString mName;
 +  nsString mDescription;
 +  nsString mSuffixes;
  };
-
+ 
+ #endif /* nsMimeTypeArray_h___ */
 diff --git a/dom/base/nsPluginArray.cpp b/dom/base/nsPluginArray.cpp
 index 8807ef2..ebadf88 100644
 --- a/dom/base/nsPluginArray.cpp
 +++ b/dom/base/nsPluginArray.cpp
 @@ -6,12 +6,14 @@
-
+ 
  #include "nsPluginArray.h"
-
+ 
 +#include "MaskConfig.hpp"
  #include "mozilla/StaticPrefs_pdfjs.h"
  #include "mozilla/dom/PluginArrayBinding.h"
@@ -1189,10 +1192,10 @@ index 8807ef2..ebadf88 100644
  #include "nsMimeTypeArray.h"
  #include "nsPIDOMWindow.h"
 +#include "nsReadableUtils.h"
-
+ 
  using namespace mozilla;
  using namespace mozilla::dom;
-@@ -27,23 +29,164 @@ static const nsLiteralString kMainPluginName = u"PDF Viewer"_ns;
+@@ -27,22 +29,163 @@ static const nsLiteralString kMainPluginName = u"PDF Viewer"_ns;
  static const nsLiteralString kExtraPluginNames[] = {
      u"Chrome PDF Viewer"_ns, u"Chromium PDF Viewer"_ns,
      u"Microsoft Edge PDF Viewer"_ns, u"WebKit built-in PDF"_ns};
@@ -1220,24 +1223,16 @@ index 8807ef2..ebadf88 100644
 +                                         const nsAString& aSuffix) {
 +  return MakeRefPtr<nsMimeType>(aPlugin, aType, aDescription, aSuffix);
 +}
-+
+ 
  nsPluginArray::nsPluginArray(nsPIDOMWindowInner* aWindow) : mWindow(aWindow) {
 -  // Create the hard-coded PDF plugin types that share MIME type arrays.
 -  mPlugins[0] = MakeRefPtr<nsPluginElement>(this, aWindow, kMainPluginName);
--
++  nsTArray<RefPtr<nsMimeType>> globalMimeTypes;
++  bool appliedOverride = false;
+ 
 -  mozilla::Array<RefPtr<nsMimeType>, 2> mimeTypes;
 -  for (uint32_t i = 0; i < std::size(kMimeTypeNames); ++i) {
 -    mimeTypes[i] = MakeRefPtr<nsMimeType>(mPlugins[0], kMimeTypeNames[i]);
--  }
--  mMimeTypeArray = MakeRefPtr<nsMimeTypeArray>(aWindow, mimeTypes);
--
--  for (uint32_t i = 0; i < std::size(kExtraPluginNames); ++i) {
--    mPlugins[i + 1] =
--        MakeRefPtr<nsPluginElement>(this, aWindow, kExtraPluginNames[i]);
--  }
-+  nsTArray<RefPtr<nsMimeType>> globalMimeTypes;
-+  bool appliedOverride = false;
-+
 +  if (auto plugins = MaskConfig::GetJsonValue("navigator.plugins")) {
 +    appliedOverride = true;
 +    if (plugins->is_array()) {
@@ -1363,25 +1358,30 @@ index 8807ef2..ebadf88 100644
 +        mPlugins.AppendElement(extraPlugin);
 +      }
 +    }
-+  }
-+
+   }
+-  mMimeTypeArray = MakeRefPtr<nsMimeTypeArray>(aWindow, mimeTypes);
+ 
+-  for (uint32_t i = 0; i < std::size(kExtraPluginNames); ++i) {
+-    mPlugins[i + 1] =
+-        MakeRefPtr<nsPluginElement>(this, aWindow, kExtraPluginNames[i]);
 +  if (!mMimeTypeArray) {
 +    mMimeTypeArray =
 +        MakeRefPtr<nsMimeTypeArray>(aWindow, globalMimeTypes);
-+  }
+   }
  }
-
- nsPluginArray::~nsPluginArray() = default;
+ 
 @@ -59,7 +202,7 @@ JSObject* nsPluginArray::WrapObject(JSContext* aCx,
  }
-
+ 
  nsPluginElement* nsPluginArray::IndexedGetter(uint32_t aIndex, bool& aFound) {
 -  if (!ForceNoPlugins() && aIndex < std::size(mPlugins)) {
 +  if (aIndex < mPlugins.Length()) {
      aFound = true;
      return mPlugins[aIndex];
    }
-@@ -70,11 +213,6 @@ nsPluginElement* nsPluginArray::NamedGetter(const nsAString& aName,
+@@ -70,11 +213,6 @@ nsPluginElement* nsPluginArray::IndexedGetter(uint32_t aIndex, bool& aFound) {
+ 
+ nsPluginElement* nsPluginArray::NamedGetter(const nsAString& aName,
                                              bool& aFound) {
 -  if (ForceNoPlugins()) {
 -    aFound = false;
@@ -1391,9 +1391,9 @@ index 8807ef2..ebadf88 100644
    for (const auto& plugin : mPlugins) {
      if (plugin->Name().Equals(aName)) {
        aFound = true;
-@@ -87,17 +225,11 @@ void nsPluginArray::GetSupportedNames(nsTArray<nsString>& aRetval) {
+@@ -87,17 +225,11 @@ nsPluginElement* nsPluginArray::NamedGetter(const nsAString& aName,
  }
-
+ 
  void nsPluginArray::GetSupportedNames(nsTArray<nsString>& aRetval) {
 -  if (ForceNoPlugins()) {
 -    return;
@@ -1403,7 +1403,7 @@ index 8807ef2..ebadf88 100644
      aRetval.AppendElement(plugin->Name());
    }
  }
-
+ 
 -bool nsPluginArray::ForceNoPlugins() { return StaticPrefs::pdfjs_disabled(); }
 -
  NS_IMPL_CYCLE_COLLECTING_ADDREF(nsPluginArray)
@@ -1412,15 +1412,15 @@ index 8807ef2..ebadf88 100644
 @@ -106,17 +238,21 @@ NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(nsPluginArray)
    NS_INTERFACE_MAP_ENTRY(nsISupportsWeakReference)
  NS_INTERFACE_MAP_END
-
+ 
 -NS_IMPL_CYCLE_COLLECTION_WRAPPERCACHE_WEAK(nsPluginArray, mPlugins[0],
 -                                           mPlugins[1], mPlugins[2],
 -                                           mPlugins[3], mPlugins[4],
 +NS_IMPL_CYCLE_COLLECTION_WRAPPERCACHE_WEAK(nsPluginArray, mPlugins,
                                             mMimeTypeArray, mWindow)
-
+ 
  // nsPluginElement implementation.
-
+ 
  nsPluginElement::nsPluginElement(nsPluginArray* aPluginArray,
                                   nsPIDOMWindowInner* aWindow,
 -                                 const nsAString& aName)
@@ -1433,12 +1433,12 @@ index 8807ef2..ebadf88 100644
 +      mName(aName),
 +      mDescription(aDescription),
 +      mFilename(aFilename) {}
-
+ 
  nsPluginArray* nsPluginElement::GetParentObject() const { return mPluginArray; }
-
+ 
 @@ -126,18 +262,37 @@ JSObject* nsPluginElement::WrapObject(JSContext* aCx,
  }
-
+ 
  nsMimeType* nsPluginElement::IndexedGetter(uint32_t aIndex, bool& aFound) {
 -  return MimeTypeArray()->IndexedGetter(aIndex, aFound);
 +  if (aIndex < mMimeTypes.Length()) {
@@ -1448,7 +1448,7 @@ index 8807ef2..ebadf88 100644
 +  aFound = false;
 +  return nullptr;
  }
-
+ 
  nsMimeType* nsPluginElement::NamedGetter(const nsAString& aName, bool& aFound) {
 -  return MimeTypeArray()->NamedGetter(aName, aFound);
 +  for (const auto& mime : mMimeTypes) {
@@ -1460,14 +1460,14 @@ index 8807ef2..ebadf88 100644
 +  aFound = false;
 +  return nullptr;
  }
-
+ 
  void nsPluginElement::GetSupportedNames(nsTArray<nsString>& retval) {
 -  return MimeTypeArray()->GetSupportedNames(retval);
 +  for (auto& mime : mMimeTypes) {
 +    retval.AppendElement(mime->Name());
 +  }
  }
-
+ 
 -uint32_t nsPluginElement::Length() { return MimeTypeArray()->Length(); }
 +uint32_t nsPluginElement::Length() { return mMimeTypes.Length(); }
 +
@@ -1475,14 +1475,13 @@ index 8807ef2..ebadf88 100644
 +  MOZ_ASSERT(aMimeType);
 +  mMimeTypes.AppendElement(aMimeType);
 +}
-
+ 
  NS_IMPL_CYCLE_COLLECTING_ADDREF(nsPluginElement)
  NS_IMPL_CYCLE_COLLECTING_RELEASE(nsPluginElement)
- NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(nsPluginElement)
 @@ -146,4 +301,5 @@ NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(nsPluginElement)
    NS_INTERFACE_MAP_ENTRY(nsISupports)
  NS_INTERFACE_MAP_END
-
+ 
 -NS_IMPL_CYCLE_COLLECTION_WRAPPERCACHE(nsPluginElement, mWindow, mPluginArray)
 +NS_IMPL_CYCLE_COLLECTION_WRAPPERCACHE(nsPluginElement, mWindow, mPluginArray,
 +                                      mMimeTypes)
