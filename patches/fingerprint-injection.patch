@@ -1031,7 +1031,7 @@ index 34f1f16..4e15cde 100644
  #include "mozilla/dom/MimeTypeArrayBinding.h"
  #include "mozilla/dom/MimeTypeBinding.h"
  #include "nsContentUtils.h"
-@@ -22,12 +21,11 @@ NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(nsMimeTypeArray)
+@@ -22,12 +21,13 @@ NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(nsMimeTypeArray)
    NS_INTERFACE_MAP_ENTRY(nsISupports)
  NS_INTERFACE_MAP_END
  
@@ -1042,8 +1042,11 @@ index 34f1f16..4e15cde 100644
  nsMimeTypeArray::nsMimeTypeArray(
      nsPIDOMWindowInner* aWindow,
 -    const mozilla::Array<RefPtr<nsMimeType>, 2>& aMimeTypes)
+-    : mWindow(aWindow), mMimeTypes(aMimeTypes) {}
 +    const nsTArray<RefPtr<nsMimeType>>& aMimeTypes)
-     : mWindow(aWindow), mMimeTypes(aMimeTypes) {}
++    : mWindow(aWindow) {
++  mMimeTypes.AppendElements(aMimeTypes);
++}
  
  nsMimeTypeArray::~nsMimeTypeArray() = default;
 @@ -43,7 +41,7 @@ nsPIDOMWindowInner* nsMimeTypeArray::GetParentObject() const {

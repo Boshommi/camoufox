@@ -30,6 +30,21 @@ with Camoufox(
         "battery:chargingTime": 1,
         "battery:dischargingTime": 1,
         "battery:level": 0.67,
+        "navigator.plugins": [
+            {
+                "name": "Widevine Content Decryption Module",
+                "description": "Provides DRM video playback support.",
+                "filename": "widevinecdm.dll",
+                "mimeTypes": [
+                    "application/x-ppapi-widevine-cdm",
+                    {
+                        "type": "application/x-google-chrome-pdf",
+                        "description": "Portable Document Format",
+                        "suffixes": "pdf",
+                    },
+                ],
+            }
+        ],
     },
 ) as browser:
     page = browser.new_page()
