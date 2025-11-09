@@ -13,6 +13,7 @@ Options:
   --clean               Clean the build directory before starting
   --parallel            Build all combinations in parallel (experimental)
   --sequential          Build sequentially (default, more stable)
+  --partial             Partial build mode: Test current changes without applying all patches (assumes manual setup with 'make revert' + selective 'make patch'). Touches _READY if needed and uses direct ./mach build.
 
 Examples:
   # Sequential builds (one at a time):
@@ -51,32 +52,41 @@ import subprocess
 AVAILABLE_TARGETS = ["linux", "windows", "macos"]
 AVAILABLE_ARCHS = ["x86_64", "arm64", "i686"]
 
+
 # Load upstream config for version/release
 def load_upstream_config():
     """Load version and release from upstream.sh"""
     config = {}
-    with open('upstream.sh', 'r') as f:
+    with open("upstream.sh", "r") as f:
         for line in f:
-            if '=' in line and not line.strip().startswith('#'):
-                key, value = line.strip().split('=', 1)
+            if "=" in line and not line.strip().startswith("#"):
+                key, value = line.strip().split("=", 1)
                 config[key] = value.strip('"').strip("'")
-    return config['version'], config['release']
+    return config["version"], config["release"]
+
 
 def get_moz_target(target, arch):
     """Get moz_target from target and arch (copied from _mixin.py)"""
     if target == "linux":
-        return "aarch64-unknown-linux-gnu" if arch == "arm64" else f"{arch}-pc-linux-gnu"
+        return (
+            "aarch64-unknown-linux-gnu" if arch == "arm64" else f"{arch}-pc-linux-gnu"
+        )
     if target == "windows":
         return f"{arch}-pc-mingw32"
     if target == "macos":
         return "aarch64-apple-darwin" if arch == "arm64" else f"{arch}-apple-darwin"
     raise ValueError(f"Unsupported target: {target}")
 
+
 def update_rustup(target):
     """Add rust targets for the given platform"""
     rust_targets = {
         "linux": ["aarch64-unknown-linux-gnu", "i686-unknown-linux-gnu"],
-        "windows": ["x86_64-pc-windows-msvc", "aarch64-pc-windows-msvc", "i686-pc-windows-msvc"],
+        "windows": [
+            "x86_64-pc-windows-msvc",
+            "aarch64-pc-windows-msvc",
+            "i686-pc-windows-msvc",
+        ],
         "macos": ["x86_64-apple-darwin", "aarch64-apple-darwin"],
     }
     for rust_target in rust_targets.get(target, []):
@@ -84,7 +94,7 @@ def update_rustup(target):
 
 
 def run(cmd, exit_on_fail=True):
-    print(f'\n------------\n{cmd}\n------------\n')
+    print(f"\n------------\n{cmd}\n------------\n")
     retval = os.system(cmd)
     if retval != 0 and exit_on_fail:
         print(f"fatal error: command '{cmd}' failed")
@@ -97,14 +107,14 @@ def run_with_prefix(cmd, prefix, exit_on_fail=True):
     Run a command and prefix all output lines with [prefix]
     Returns the exit code
     """
-    print(f'[{prefix}] Running: {cmd}\n', flush=True)
+    print(f"[{prefix}] Running: {cmd}\n", flush=True)
 
     # Use unbuffered output with stdbuf on Linux (if available)
     # stdbuf needs to wrap the shell, not the command
-    if shutil.which('stdbuf'):
+    if shutil.which("stdbuf"):
         # Wrap the shell itself with stdbuf
         process = subprocess.Popen(
-            ['stdbuf', '-oL', '-eL', 'bash', '-c', cmd],
+            ["stdbuf", "-oL", "-eL", "bash", "-c", cmd],
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             bufsize=0,  # Unbuffered
@@ -120,16 +130,18 @@ def run_with_prefix(cmd, prefix, exit_on_fail=True):
         )
 
     # Stream output with prefix in real-time
-    for line in iter(process.stdout.readline, b''):
-        decoded_line = line.decode('utf-8', errors='replace')
-        print(f'[{prefix}] {decoded_line}', end='', flush=True)
+    for line in iter(process.stdout.readline, b""):
+        decoded_line = line.decode("utf-8", errors="replace")
+        print(f"[{prefix}] {decoded_line}", end="", flush=True)
 
     process.wait()
 
     if process.returncode != 0:
-        print(f'[{prefix}] Command failed with exit code {process.returncode}', flush=True)
+        print(
+            f"[{prefix}] Command failed with exit code {process.returncode}", flush=True
+        )
         if exit_on_fail:
-            raise RuntimeError(f'Command failed: {cmd}')
+            raise RuntimeError(f"Command failed: {cmd}")
 
     return process.returncode
 
@@ -138,16 +150,31 @@ def run_with_prefix(cmd, prefix, exit_on_fail=True):
 class BSYS:
     target: str
     arch: str
+    partial: bool = False  # New field for partial mode
 
     @staticmethod
     def bootstrap():
         """Bootstrap the build system"""
-        run('make bootstrap')
+        run("make bootstrap")
+
+    def ensure_partial_setup(self):
+        """Ensure source is ready for partial build"""
+        version, release = load_upstream_config()
+        src_dir = f"camoufox-{version}-{release}"
+        if not os.path.exists(src_dir):
+            print(
+                f"Error: Source directory {src_dir} not found. Run 'make setup' or 'make git-dir' first."
+            )
+            sys.exit(1)
+        ready_path = os.path.join(src_dir, "_READY")
+        if not os.path.exists(ready_path):
+            print("Setting up partial build: touching _READY")
+            open(ready_path, "w").close()  # touch file
 
     def generate_mozconfig(self, output_path, verbose=True):
         """Generate a mozconfig file for this target/arch at specified path"""
         # Read base mozconfig
-        with open('assets/base.mozconfig', 'r') as f:
+        with open("assets/base.mozconfig", "r") as f:
             content = f.read()
 
         # Add target
@@ -155,13 +182,13 @@ class BSYS:
         content += f"\nac_add_options --target={moz_target}\n"
 
         # Add platform-specific mozconfig if it exists
-        platform_config = f'assets/{self.target}.mozconfig'
+        platform_config = f"assets/{self.target}.mozconfig"
         if os.path.exists(platform_config):
-            with open(platform_config, 'r') as f:
+            with open(platform_config, "r") as f:
                 content += f.read()
 
         # Write to output path
-        with open(output_path, 'w') as f:
+        with open(output_path, "w") as f:
             f.write(content)
 
         if verbose:
@@ -170,16 +197,28 @@ class BSYS:
     def build(self, mozconfig_path=None, prefix=None):
         """Build the Camoufox source code"""
         version, release = load_upstream_config()
-        src_dir = f'camoufox-{version}-{release}'
+        src_dir = f"camoufox-{version}-{release}"
 
-        # Set MOZCONFIG if provided, otherwise use BUILD_TARGET (legacy)
-        if mozconfig_path:
-            # For parallel builds, use absolute path to mozconfig
+        # For partial mode, always use direct ./mach build with MOZCONFIG to skip make build's patching check
+        if self.partial:
+            if not mozconfig_path:
+                # Generate a temporary mozconfig for partial mode
+                with tempfile.NamedTemporaryFile(
+                    mode="w", suffix=".mozconfig", delete=False
+                ) as tmp:
+                    mozconfig_path = tmp.name
+                self.generate_mozconfig(mozconfig_path, verbose=True)
             abs_mozconfig = os.path.abspath(mozconfig_path)
-            cmd = f'cd {src_dir} && MOZCONFIG={abs_mozconfig} ./mach build'
+            cmd = f"cd {src_dir} && MOZCONFIG={abs_mozconfig} ./mach build"
         else:
-            os.environ['BUILD_TARGET'] = f'{self.target},{self.arch}'
-            cmd = 'make build'
+            # Original logic
+            if mozconfig_path:
+                # For parallel builds, use absolute path to mozconfig
+                abs_mozconfig = os.path.abspath(mozconfig_path)
+                cmd = f"cd {src_dir} && MOZCONFIG={abs_mozconfig} ./mach build"
+            else:
+                os.environ["BUILD_TARGET"] = f"{self.target},{self.arch}"
+                cmd = "make build"
 
         # Use prefixed output for parallel builds
         if prefix:
@@ -198,9 +237,9 @@ class BSYS:
         # Set MOZCONFIG environment for parallel builds to ensure correct obj directory
         if mozconfig_path:
             abs_mozconfig = os.path.abspath(mozconfig_path)
-            cmd = f'MOZCONFIG={abs_mozconfig} python3 scripts/package.py {self.target} --version {version} --release {release} --arch {self.arch} --fonts {fonts} --includes {includes}'
+            cmd = f"MOZCONFIG={abs_mozconfig} python3 scripts/package.py {self.target} --version {version} --release {release} --arch {self.arch} --fonts {fonts} --includes {includes}"
         else:
-            cmd = f'python3 scripts/package.py {self.target} --version {version} --release {release} --arch {self.arch} --fonts {fonts} --includes {includes}'
+            cmd = f"python3 scripts/package.py {self.target} --version {version} --release {release} --arch {self.arch} --fonts {fonts} --includes {includes}"
 
         if prefix:
             run_with_prefix(cmd, prefix)
@@ -209,39 +248,41 @@ class BSYS:
 
     def update_target(self):
         """Change the build target (legacy method for sequential builds)"""
-        os.environ['BUILD_TARGET'] = f'{self.target},{self.arch}'
-        run('make set-target')
+        os.environ["BUILD_TARGET"] = f"{self.target},{self.arch}"
+        run("make set-target")
 
     @property
     def assets(self) -> List[str]:
         """Get the list of assets"""
-        package_pattern = f'camoufox-*-{self.target[:3]}.{self.arch}.zip'
+        package_pattern = f"camoufox-*-{self.target[:3]}.{self.arch}.zip"
         return glob.glob(package_pattern)
 
     @staticmethod
     def clean():
         """Clean the Camoufox directory"""
-        run('make clean')
+        run("make clean")
 
 
-def run_build(target, arch):
+def run_build(target, arch, partial=False):
     """
     Run the build for the given target and architecture (sequential mode)
     """
-    builder = BSYS(target, arch)
+    builder = BSYS(target, arch, partial=partial)
+    if partial:
+        builder.ensure_partial_setup()
     builder.update_target()
     # Run build
     builder.build()
     # Run package
     builder.package()
     # Move assets to dist
-    os.makedirs('dist', exist_ok=True)
-    print('Assets:', ', '.join(builder.assets))
+    os.makedirs("dist", exist_ok=True)
+    print("Assets:", ", ".join(builder.assets))
     for asset in builder.assets:
-        shutil.move(asset, f'dist/{asset}')
+        shutil.move(asset, f"dist/{asset}")
 
 
-def run_build_parallel(target, arch):
+def run_build_parallel(target, arch, partial=False):
     """
     Run the build for the given target and architecture (parallel mode)
     Each worker gets its own isolated mozconfig file
@@ -253,11 +294,13 @@ def run_build_parallel(target, arch):
     print(f"[{prefix}] Starting build")
     print(f"[{prefix}] {'='*60}\n")
 
-    builder = BSYS(target, arch)
+    builder = BSYS(target, arch, partial=partial)
+    if partial:
+        builder.ensure_partial_setup()
 
     # Use consistent mozconfig path (no random suffix) to avoid rebuilds
     # This file persists between runs so build system doesn't reconfigure unnecessarily
-    mozconfig_path = f'/tmp/mozconfig-{target}-{arch}.mozconfig'
+    mozconfig_path = f"/tmp/mozconfig-{target}-{arch}.mozconfig"
 
     try:
         # Generate mozconfig
@@ -271,11 +314,11 @@ def run_build_parallel(target, arch):
         builder.package(mozconfig_path=mozconfig_path, prefix=prefix)
 
         # Move assets to dist
-        os.makedirs('dist', exist_ok=True)
+        os.makedirs("dist", exist_ok=True)
         assets = builder.assets
         print(f'[{prefix}] Assets: {", ".join(assets)}')
         for asset in assets:
-            shutil.move(asset, f'dist/{asset}')
+            shutil.move(asset, f"dist/{asset}")
 
         print(f"\n[{prefix}] {'='*60}")
         print(f"[{prefix}] Build completed successfully!")
@@ -299,28 +342,37 @@ def main():
     parser.add_argument(
         "--target",
         choices=AVAILABLE_TARGETS,
-        nargs='+',
+        nargs="+",
         required=True,
         help="Target platform for the build",
     )
     parser.add_argument(
         "--arch",
         choices=AVAILABLE_ARCHS,
-        nargs='+',
+        nargs="+",
         required=True,
         help="Target architecture for the build",
     )
-    parser.add_argument("--bootstrap", action="store_true", help="Bootstrap the build system")
+    parser.add_argument(
+        "--bootstrap", action="store_true", help="Bootstrap the build system"
+    )
     parser.add_argument(
         "--clean", action="store_true", help="Clean the build directory before starting"
     )
     parser.add_argument(
-        "--parallel", action="store_true",
-        help="Build all target/arch combinations in parallel (experimental)"
+        "--parallel",
+        action="store_true",
+        help="Build all target/arch combinations in parallel (experimental)",
     )
     parser.add_argument(
-        "--sequential", action="store_true",
-        help="Build sequentially (default, more stable)"
+        "--sequential",
+        action="store_true",
+        help="Build sequentially (default, more stable)",
+    )
+    parser.add_argument(
+        "--partial",
+        action="store_true",
+        help="Partial build mode: Test current changes without applying all patches (assumes manual setup with 'make revert' + selective 'make patch'). Touches _READY if needed and uses direct ./mach build.",
     )
 
     args = parser.parse_args()
@@ -355,29 +407,37 @@ def main():
         return
 
     print(f"\nBuilding {len(combinations)} combination(s): {combinations}")
-    print(f"Mode: {'PARALLEL' if args.parallel else 'SEQUENTIAL'}\n")
+    print(f"Mode: {'PARALLEL' if args.parallel else 'SEQUENTIAL'}")
+    if args.partial:
+        print("Partial mode: Building current changes (no full patching)")
+    print()
 
     if args.parallel:
         # Parallel mode: use multiprocessing
         # CRITICAL: Hide in-tree mozconfig to prevent race conditions
         # Multiple builds reading/checking the same file causes spurious reconfigures
         version, release = load_upstream_config()
-        src_dir = f'camoufox-{version}-{release}'
-        in_tree_mozconfig = f'{src_dir}/mozconfig'
-        in_tree_mozconfig_backup = f'{in_tree_mozconfig}.parallel_backup'
-        in_tree_hash = f'{src_dir}/mozconfig.hash'
-        in_tree_hash_backup = f'{in_tree_hash}.parallel_backup'
+        src_dir = f"camoufox-{version}-{release}"
+        in_tree_mozconfig = f"{src_dir}/mozconfig"
+        in_tree_mozconfig_backup = f"{in_tree_mozconfig}.parallel_backup"
+        in_tree_hash = f"{src_dir}/mozconfig.hash"
+        in_tree_hash_backup = f"{in_tree_hash}.parallel_backup"
 
         # Temporarily hide in-tree mozconfig files
         if os.path.exists(in_tree_mozconfig):
             os.rename(in_tree_mozconfig, in_tree_mozconfig_backup)
-            print(f"Temporarily moved {in_tree_mozconfig} to prevent parallel build conflicts")
+            print(
+                f"Temporarily moved {in_tree_mozconfig} to prevent parallel build conflicts"
+            )
         if os.path.exists(in_tree_hash):
             os.rename(in_tree_hash, in_tree_hash_backup)
 
         try:
             with multiprocessing.Pool(processes=len(combinations)) as pool:
-                results = pool.starmap(run_build_parallel, combinations)
+                results = pool.starmap(
+                    lambda t, a: run_build_parallel(t, a, partial=args.partial),
+                    combinations,
+                )
 
             # Check if any builds failed
             if not all(results):
@@ -395,7 +455,7 @@ def main():
     else:
         # Sequential mode: original behavior
         for target, arch in combinations:
-            run_build(target, arch)
+            run_build(target, arch, partial=args.partial)
 
 
 if __name__ == "__main__":
