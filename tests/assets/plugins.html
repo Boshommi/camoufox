@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <title>Plugin Test</title>
+    </head>
+    <body>
+        <h1>Plugin Spoofing Test</h1>
+        <div id="result"></div>
+        <script>
+            window.pluginData = {
+                length: navigator.plugins.length,
+                plugins: [],
+            };
+
+            for (let i = 0; i < navigator.plugins.length; i++) {
+                const plugin = navigator.plugins[i];
+                const pluginInfo = {
+                    name: plugin.name,
+                    description: plugin.description,
+                    filename: plugin.filename,
+                    length: plugin.length,
+                    mimeTypes: [],
+                };
+
+                for (let j = 0; j < plugin.length; j++) {
+                    const mimeType = plugin[j];
+                    pluginInfo.mimeTypes.push({
+                        type: mimeType.type,
+                        description: mimeType.description,
+                        suffixes: mimeType.suffixes,
+                    });
+                }
+
+                window.pluginData.plugins.push(pluginInfo);
+            }
+
+            document.getElementById('result').textContent = JSON.stringify(window.pluginData, null, 2);
+        </script>
+    </body>
+</html>

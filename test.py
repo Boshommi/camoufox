@@ -25,6 +25,34 @@ with Camoufox(
         ),  # Mbps (use float('inf') for infinity)
         "net-info-api:rtt": 50.0,  # milliseconds
         "net-info-api:saveData": False,  # boolean
+        # Plugin spoofing
+        "navigator.plugins": [
+            {
+                "name": "Widevine Content Decryption Module",
+                "description": "Provides DRM video playback support.",
+                "filename": "widevinecdm.dll",
+                "mimeTypes": [
+                    "application/x-ppapi-widevine-cdm",
+                    {
+                        "type": "application/x-google-chrome-pdf",
+                        "description": "Portable Document Format",
+                        "suffixes": "pdf",
+                    },
+                ],
+            },
+            {
+                "name": "Chrome PDF Plugin",
+                "description": "Portable Document Format",
+                "filename": "internal-pdf-viewer",
+                "mimeTypes": [
+                    {
+                        "type": "application/pdf",
+                        "description": "Portable Document Format",
+                        "suffixes": "pdf",
+                    }
+                ],
+            },
+        ],
     },
 ) as browser:
     page = browser.new_page()

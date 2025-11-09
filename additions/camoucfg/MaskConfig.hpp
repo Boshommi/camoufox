@@ -310,4 +310,70 @@ MVoices() {
   return voices;
 }
 
+// Helper struct for plugin MIME type data
+struct PluginMimeType {
+  std::string type;
+  std::string description;
+  std::string suffixes;
+};
+
+// Helper struct for plugin data
+struct PluginData {
+  std::string name;
+  std::string description;
+  std::string filename;
+  std::vector<PluginMimeType> mimeTypes;
+};
+
+inline std::optional<std::vector<PluginData>> MPlugins() {
+  auto data = GetJson();
+  if (!data.contains("navigator.plugins") || !data["navigator.plugins"].is_array()) {
+    return std::nullopt;
+  }
+
+  std::vector<PluginData> plugins;
+  for (const auto& pluginJson : data["navigator.plugins"]) {
+    if (!pluginJson.contains("name") || !pluginJson["name"].is_string()) {
+      continue;
+    }
+
+    PluginData plugin;
+    plugin.name = pluginJson["name"].get<std::string>();
+    
+    if (pluginJson.contains("description") && pluginJson["description"].is_string()) {
+      plugin.description = pluginJson["description"].get<std::string>();
+    }
+    
+    if (pluginJson.contains("filename") && pluginJson["filename"].is_string()) {
+      plugin.filename = pluginJson["filename"].get<std::string>();
+    }
+    
+    if (pluginJson.contains("mimeTypes") && pluginJson["mimeTypes"].is_array()) {
+      for (const auto& mimeJson : pluginJson["mimeTypes"]) {
+        PluginMimeType mimeType;
+        
+        if (mimeJson.is_string()) {
+          mimeType.type = mimeJson.get<std::string>();
+        } else if (mimeJson.is_object()) {
+          if (mimeJson.contains("type") && mimeJson["type"].is_string()) {
+            mimeType.type = mimeJson["type"].get<std::string>();
+          }
+          if (mimeJson.contains("description") && mimeJson["description"].is_string()) {
+            mimeType.description = mimeJson["description"].get<std::string>();
+          }
+          if (mimeJson.contains("suffixes") && mimeJson["suffixes"].is_string()) {
+            mimeType.suffixes = mimeJson["suffixes"].get<std::string>();
+          }
+        }
+        
+        plugin.mimeTypes.push_back(mimeType);
+      }
+    }
+    
+    plugins.push_back(plugin);
+  }
+  
+  return plugins;
+}
+
 }  // namespace MaskConfig

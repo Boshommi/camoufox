@@ -37,6 +37,7 @@
     "navigator.cookieEnabled": "bool",
     "navigator.globalPrivacyControl": "bool",
     "navigator.onLine": "bool",
+    "navigator.plugins": "array[@PLUGIN_TYPE]",
     "window.history.length": "int[>=0]",
     "pdfViewerEnabled": "bool",
     
@@ -289,6 +290,19 @@
         "*voiceURI": "str",
         "*name": "str",
         "*lang": "str"
+    },
+
+    "@PLUGIN_TYPE": {
+        "*name": "str",
+        "description": "str",
+        "filename": "str",
+        "mimeTypes": "array[@MIMETYPE_TYPE | str]"
+    },
+
+    "@MIMETYPE_TYPE": {
+        "*type": "str",
+        "description": "str",
+        "suffixes": "str"
     },
 
     "humanize": "bool",

@@ -16,6 +16,7 @@
     { "property": "navigator.globalPrivacyControl", "type": "bool" },
     { "property": "navigator.buildID", "type": "str" },
     { "property": "navigator.onLine", "type": "bool" },
+    { "property": "navigator.plugins", "type": "array" },
     { "property": "screen.availHeight", "type": "uint" },
     { "property": "screen.availWidth", "type": "uint" },
     { "property": "screen.availTop", "type": "uint" },
