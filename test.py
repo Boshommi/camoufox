@@ -16,6 +16,7 @@ with Camoufox(
         # Set to False to disable the API entirely
         # "net-info-api": False,
         # Or customize the returned values:
+        "battery": True,
         "net-info-api": True,
         "net-info-api:type": "wifi",  # cellular, bluetooth, ethernet, wifi, other, none, unknown
         "net-info-api:effectiveType": "4g",  # slow-2g, 2g, 3g, 4g

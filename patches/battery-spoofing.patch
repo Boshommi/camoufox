@@ -1,0 +1,77 @@
+diff --git a/dom/base/Navigator.cpp b/dom/base/Navigator.cpp
+index 44d367dfe5..0ddd926798 100644
+--- a/dom/base/Navigator.cpp
++++ b/dom/base/Navigator.cpp
+@@ -1472,6 +1472,14 @@ void Navigator::MozGetUserMedia(const MediaStreamConstraints& aConstraints,
+ //*****************************************************************************
+ 
+ Promise* Navigator::GetBattery(ErrorResult& aRv) {
++  // Check if battery API is explicitly disabled
++  if (auto value = MaskConfig::GetBool("battery")) {
++    if (!value.value()) {
++      aRv.Throw(NS_ERROR_NOT_AVAILABLE);
++      return nullptr;
++    }
++  }
++
+   if (mBatteryPromise) {
+     return mBatteryPromise;
+   }
+diff --git a/dom/battery/BatteryManager.cpp b/dom/battery/BatteryManager.cpp
+index 2f2cad64a6..c0dd21e8d7 100644
+--- a/dom/battery/BatteryManager.cpp
++++ b/dom/battery/BatteryManager.cpp
+@@ -127,26 +127,9 @@ double BatteryManager::Level() const {
+ void BatteryManager::UpdateFromBatteryInfo(
+     const hal::BatteryInformation& aBatteryInfo) {
+   mLevel = aBatteryInfo.level();
+-
+-  // Round to the nearest ten percent for non-chrome.
+-  Document* doc = GetOwnerWindow() ? GetOwnerWindow()->GetDoc() : nullptr;
+-
+   mCharging = aBatteryInfo.charging();
+   mRemainingTime = aBatteryInfo.remainingTime();
+ 
+-  if (!nsContentUtils::IsChromeDoc(doc)) {
+-    mLevel = lround(mLevel * 10.0) / 10.0;
+-    if (mLevel == 1.0) {
+-      mRemainingTime =
+-          mCharging ? kDefaultRemainingTime : kUnknownRemainingTime;
+-    } else if (mRemainingTime != kUnknownRemainingTime) {
+-      // Round the remaining time to a multiple of 15 minutes and never zero
+-      const double MINUTES_15 = 15.0 * 60.0;
+-      mRemainingTime =
+-          fmax(lround(mRemainingTime / MINUTES_15) * MINUTES_15, MINUTES_15);
+-    }
+-  }
+-
+   // Add some guards to make sure the values are coherent.
+   if (mLevel == 1.0 && mCharging == true &&
+       mRemainingTime != kDefaultRemainingTime) {
+diff --git a/dom/webidl/BatteryManager.webidl b/dom/webidl/BatteryManager.webidl
+index 2a09a514b8..d1faa59cfd 100644
+--- a/dom/webidl/BatteryManager.webidl
++++ b/dom/webidl/BatteryManager.webidl
+@@ -10,7 +10,7 @@
+  * liability, trademark and document use rules apply.
+  */
+ 
+-[ChromeOnly, Exposed=Window]
++[Exposed=Window]
+ interface BatteryManager : EventTarget {
+     readonly attribute boolean             charging;
+     readonly attribute unrestricted double chargingTime;
+diff --git a/dom/webidl/Navigator.webidl b/dom/webidl/Navigator.webidl
+index 1fd32ac068..11426d07a3 100644
+--- a/dom/webidl/Navigator.webidl
++++ b/dom/webidl/Navigator.webidl
+@@ -134,8 +134,7 @@ Navigator includes NavigatorGeolocation;
+ 
+ // http://www.w3.org/TR/battery-status/#navigatorbattery-interface
+ partial interface Navigator {
+-  // ChromeOnly to prevent web content from fingerprinting users' batteries.
+-  [Throws, ChromeOnly, Pref="dom.battery.enabled"]
++  [Throws, Pref="dom.battery.enabled"]
+   Promise<BatteryManager> getBattery();
+ };
+ 
