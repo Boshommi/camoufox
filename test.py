@@ -77,6 +77,15 @@ with Camoufox(
         "mediaQuery:any-hover": "hover",
         "mediaQuery:monochrome": False,
         "mediaQuery:color": True,
+        # Media codec spoofing (video/audio.canPlayType())
+        "mediaCodec:overrides": {
+            "video/mp4": "probably",
+            "video/ogg": "maybe",
+            "video/webm": "",  # Cannot play
+            "audio/mpeg": "probably",
+            "audio/ogg": "probably",
+            "audio/aiff": "",  # Safari-only format
+        },
         # Plugin spoofing
         "navigator.plugins": [
             {

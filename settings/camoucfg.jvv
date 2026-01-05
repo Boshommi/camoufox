@@ -356,5 +356,11 @@
     "mediaQuery:any-pointer$__MQ": "str[fine, coarse, none]",
     "mediaQuery:any-hover$__MQ": "str[hover, none]",
     "mediaQuery:monochrome$__MQ": "bool",
-    "mediaQuery:color$__MQ": "bool"
+    "mediaQuery:color$__MQ": "bool",
+
+    "mediaCodec:overrides": "@MEDIA_CODEC_OVERRIDES",
+
+    "@MEDIA_CODEC_OVERRIDES": {
+        "/^.+$/": "str"
+    }
 }

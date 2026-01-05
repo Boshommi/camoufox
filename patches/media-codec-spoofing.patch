@@ -1,0 +1,51 @@
+diff --git a/dom/media/mediaelement/HTMLMediaElement.cpp b/dom/media/mediaelement/HTMLMediaElement.cpp
+index 741a8f1744..edc0ac1e5d 100644
+--- a/dom/media/mediaelement/HTMLMediaElement.cpp
++++ b/dom/media/mediaelement/HTMLMediaElement.cpp
+@@ -25,6 +25,10 @@
+ #include "GMPCrashHelper.h"
+ #include "GVAutoplayPermissionRequest.h"
+ #include "nsString.h"
++
++// Camoufox: Media codec spoofing support
++#include "MaskConfig.hpp"
++
+ #ifdef MOZ_ANDROID_HLS_SUPPORT
+ #  include "HLSDecoder.h"
+ #endif
+@@ -5323,6 +5327,23 @@ CanPlayStatus HTMLMediaElement::GetCanPlay(
+ }
+ 
+ void HTMLMediaElement::CanPlayType(const nsAString& aType, nsAString& aResult) {
++  // Camoufox: Check for media codec override
++  std::string mimeType = NS_ConvertUTF16toUTF8(aType).get();
++  if (auto override = MaskConfig::GetNested("mediaCodec:overrides", mimeType)) {
++    std::string value = override->get<std::string>();
++    if (value == "probably") {
++      aResult.AssignLiteral("probably");
++    } else if (value == "maybe") {
++      aResult.AssignLiteral("maybe");
++    } else {
++      aResult.Truncate();  // "" means cannot play
++    }
++    LOG(LogLevel::Debug,
++        ("%p CanPlayType(%s) = \"%s\" (spoofed)", this, mimeType.c_str(),
++         value.c_str()));
++    return;
++  }
++
+   DecoderDoctorDiagnostics diagnostics;
+   CanPlayStatus canPlay = GetCanPlay(aType, &diagnostics);
+   diagnostics.StoreFormatDiagnostics(OwnerDoc(), aType, canPlay != CANPLAY_NO,
+diff --git a/dom/media/mediaelement/moz.build b/dom/media/mediaelement/moz.build
+index 452b83a454..b0e3b44d99 100644
+--- a/dom/media/mediaelement/moz.build
++++ b/dom/media/mediaelement/moz.build
+@@ -31,6 +31,7 @@ if CONFIG["MOZ_ANDROID_HLS_SUPPORT"]:
+ include("/ipc/chromium/chromium-config.mozbuild")
+ 
+ LOCAL_INCLUDES += [
++    "/camoucfg",
+     "/dom/base",
+     "/dom/media",
+     "/netwerk/base",

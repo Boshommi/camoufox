@@ -137,5 +137,6 @@
     { "property": "mediaQuery:any-pointer", "type": "str" },
     { "property": "mediaQuery:any-hover", "type": "str" },
     { "property": "mediaQuery:monochrome", "type": "bool" },
-    { "property": "mediaQuery:color", "type": "bool" }
+    { "property": "mediaQuery:color", "type": "bool" },
+    { "property": "mediaCodec:overrides", "type": "dict" }
 ]
