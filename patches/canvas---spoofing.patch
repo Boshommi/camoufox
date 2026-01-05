@@ -1,0 +1,259 @@
+diff --git a/dom/canvas/OffscreenCanvas.cpp b/dom/canvas/OffscreenCanvas.cpp
+index 064a1c67f0..62c7820da6 100644
+--- a/dom/canvas/OffscreenCanvas.cpp
++++ b/dom/canvas/OffscreenCanvas.cpp
+@@ -31,6 +31,13 @@
+ #include "nsIPermissionManager.h"
+ #include "nsProxyRelease.h"
+ 
++// Canvas pHash spoofing
++#include "MaskConfig.hpp"
++#include "mozilla/Base64.h"
++#include "mozilla/gfx/2D.h"
++#include "mozilla/dom/MemoryBlobImpl.h"
++#include <cstdlib>
++
+ namespace mozilla::dom {
+ 
+ OffscreenCanvasCloneData::OffscreenCanvasCloneData(
+@@ -490,6 +496,52 @@ already_AddRefed<Promise> OffscreenCanvas::ConvertToBlob(
+ 
+   nsCOMPtr<nsIGlobalObject> global = GetOwnerGlobal();
+ 
++  // Check for pHash-based canvas fingerprint spoofing
++  if (MaskConfig::HasCanvasFingerprints() && mCurrentContext) {
++    RefPtr<gfx::SourceSurface> surface = mCurrentContext->GetSurfaceSnapshot(nullptr);
++    if (surface) {
++      RefPtr<gfx::DataSourceSurface> dataSurface = surface->GetDataSurface();
++      if (dataSurface) {
++        gfx::DataSourceSurface::ScopedMap map(dataSurface,
++                                              gfx::DataSourceSurface::READ);
++        if (map.IsMapped()) {
++          gfx::SurfaceFormat format = dataSurface->GetFormat();
++          bool isBGRA = (format == gfx::SurfaceFormat::B8G8R8A8 ||
++                         format == gfx::SurfaceFormat::B8G8R8X8);
++          uint64_t pHash = MaskConfig::ComputePHash(
++              map.GetData(), mWidth, mHeight, map.GetStride(), isBGRA);
++          auto spoofed = MaskConfig::GetCanvasFingerprintByPHash(
++              mWidth, mHeight, pHash);
++          if (spoofed) {
++            RefPtr<Promise> promise = Promise::Create(global, aRv);
++            if (aRv.Failed()) {
++              return nullptr;
++            }
++            // Extract base64 data from data URL
++            const std::string& dataUrl = *spoofed;
++            size_t commaPos = dataUrl.find(',');
++            if (commaPos != std::string::npos) {
++              std::string base64Data = dataUrl.substr(commaPos + 1);
++              nsAutoCString decoded;
++              nsDependentCString base64Input(base64Data.c_str());
++              if (NS_SUCCEEDED(Base64Decode(base64Input, decoded))) {
++                void* buffer = malloc(decoded.Length());
++                if (buffer) {
++                  memcpy(buffer, decoded.get(), decoded.Length());
++                  RefPtr<MemoryBlobImpl> blobImpl = new MemoryBlobImpl(
++                      buffer, decoded.Length(), u"image/png"_ns);
++                  RefPtr<Blob> blob = Blob::Create(global, blobImpl);
++                  promise->MaybeResolve(blob);
++                  return promise.forget();
++                }
++              }
++            }
++          }
++        }
++      }
++    }
++  }
++
+   RefPtr<Promise> promise = Promise::Create(global, aRv);
+   if (aRv.Failed()) {
+     return nullptr;
+@@ -547,6 +599,52 @@ already_AddRefed<Promise> OffscreenCanvas::ToBlob(JSContext* aCx,
+ 
+   nsCOMPtr<nsIGlobalObject> global = GetOwnerGlobal();
+ 
++  // Check for pHash-based canvas fingerprint spoofing
++  if (MaskConfig::HasCanvasFingerprints() && mCurrentContext) {
++    RefPtr<gfx::SourceSurface> surface = mCurrentContext->GetSurfaceSnapshot(nullptr);
++    if (surface) {
++      RefPtr<gfx::DataSourceSurface> dataSurface = surface->GetDataSurface();
++      if (dataSurface) {
++        gfx::DataSourceSurface::ScopedMap map(dataSurface,
++                                              gfx::DataSourceSurface::READ);
++        if (map.IsMapped()) {
++          gfx::SurfaceFormat format = dataSurface->GetFormat();
++          bool isBGRA = (format == gfx::SurfaceFormat::B8G8R8A8 ||
++                         format == gfx::SurfaceFormat::B8G8R8X8);
++          uint64_t pHash = MaskConfig::ComputePHash(
++              map.GetData(), mWidth, mHeight, map.GetStride(), isBGRA);
++          auto spoofed = MaskConfig::GetCanvasFingerprintByPHash(
++              mWidth, mHeight, pHash);
++          if (spoofed) {
++            RefPtr<Promise> promise = Promise::Create(global, aRv);
++            if (aRv.Failed()) {
++              return nullptr;
++            }
++            // Extract base64 data from data URL
++            const std::string& dataUrl = *spoofed;
++            size_t commaPos = dataUrl.find(',');
++            if (commaPos != std::string::npos) {
++              std::string base64Data = dataUrl.substr(commaPos + 1);
++              nsAutoCString decoded;
++              nsDependentCString base64Input(base64Data.c_str());
++              if (NS_SUCCEEDED(Base64Decode(base64Input, decoded))) {
++                void* buffer = malloc(decoded.Length());
++                if (buffer) {
++                  memcpy(buffer, decoded.get(), decoded.Length());
++                  RefPtr<MemoryBlobImpl> blobImpl = new MemoryBlobImpl(
++                      buffer, decoded.Length(), u"image/png"_ns);
++                  RefPtr<Blob> blob = Blob::Create(global, blobImpl);
++                  promise->MaybeResolve(blob);
++                  return promise.forget();
++                }
++              }
++            }
++          }
++        }
++      }
++    }
++  }
++
+   RefPtr<Promise> promise = Promise::Create(global, aRv);
+   if (aRv.Failed()) {
+     return nullptr;
+diff --git a/dom/canvas/moz.build b/dom/canvas/moz.build
+index f7b5e367f3..f08f3c5fcd 100644
+--- a/dom/canvas/moz.build
++++ b/dom/canvas/moz.build
+@@ -199,6 +199,7 @@ USE_LIBS += ["translator"]  # Grab the Angle shader translator.
+ 
+ FINAL_LIBRARY = "xul"
+ LOCAL_INCLUDES += [
++    "/camoucfg",
+     "/dom/base",
+     "/dom/html",
+     "/dom/svg",
+diff --git a/dom/html/HTMLCanvasElement.cpp b/dom/html/HTMLCanvasElement.cpp
+index 92039fa0b7..c7b46f1067 100644
+--- a/dom/html/HTMLCanvasElement.cpp
++++ b/dom/html/HTMLCanvasElement.cpp
+@@ -55,6 +55,12 @@
+ #include "nsRefreshDriver.h"
+ #include "nsStreamUtils.h"
+ 
++// Canvas pHash spoofing
++#include "MaskConfig.hpp"
++#include "mozilla/gfx/2D.h"
++#include "mozilla/dom/MemoryBlobImpl.h"
++#include <cstdlib>
++
+ using namespace mozilla::layers;
+ using namespace mozilla::gfx;
+ 
+@@ -775,6 +781,40 @@ void HTMLCanvasElement::ToDataURL(JSContext* aCx, const nsAString& aType,
+     return;
+   }
+ 
++  // Check for pHash-based canvas fingerprint spoofing
++  if (MaskConfig::HasCanvasFingerprints()) {
++    CSSIntSize size = GetWidthHeight();
++    if (size.width > 0 && size.height > 0) {
++      RefPtr<gfx::SourceSurface> surface = GetSurfaceSnapshot(nullptr);
++      if (surface) {
++        RefPtr<gfx::DataSourceSurface> dataSurface = surface->GetDataSurface();
++        if (dataSurface) {
++          gfx::DataSourceSurface::ScopedMap map(dataSurface,
++                                                gfx::DataSourceSurface::READ);
++          if (map.IsMapped()) {
++            gfx::SurfaceFormat format = dataSurface->GetFormat();
++            bool isBGRA = (format == gfx::SurfaceFormat::B8G8R8A8 ||
++                           format == gfx::SurfaceFormat::B8G8R8X8);
++            uint64_t pHash = MaskConfig::ComputePHash(
++                map.GetData(), size.width, size.height, map.GetStride(), isBGRA);
++            printf("[Canvas pHash] toDataURL %dx%d stride=%d isBGRA=%d pHash=%016llx\n",
++                   size.width, size.height, map.GetStride(), isBGRA,
++                   (unsigned long long)pHash);
++            auto spoofed = MaskConfig::GetCanvasFingerprintByPHash(
++                size.width, size.height, pHash);
++            if (spoofed) {
++              printf("[Canvas pHash] MATCH found, spoofing!\n");
++              aDataURL = NS_ConvertUTF8toUTF16(*spoofed);
++              return;
++            } else {
++              printf("[Canvas pHash] No match within Hamming distance 10\n");
++            }
++          }
++        }
++      }
++    }
++  }
++
+   nsString dataURL;
+   nsresult rv = ToDataURLImpl(aCx, aSubjectPrincipal, aType, aParams, dataURL);
+   if (recheckCanRead && !CallerCanRead(aSubjectPrincipal)) {
+@@ -1035,6 +1075,52 @@ void HTMLCanvasElement::ToBlob(JSContext* aCx, BlobCallback& aCallback,
+     return;
+   }
+ 
++  // Check for pHash-based canvas fingerprint spoofing
++  if (MaskConfig::HasCanvasFingerprints()) {
++    RefPtr<gfx::SourceSurface> surface = GetSurfaceSnapshot(nullptr);
++    if (surface) {
++      RefPtr<gfx::DataSourceSurface> dataSurface = surface->GetDataSurface();
++      if (dataSurface) {
++        gfx::DataSourceSurface::ScopedMap map(dataSurface,
++                                              gfx::DataSourceSurface::READ);
++        if (map.IsMapped()) {
++          gfx::SurfaceFormat format = dataSurface->GetFormat();
++          bool isBGRA = (format == gfx::SurfaceFormat::B8G8R8A8 ||
++                         format == gfx::SurfaceFormat::B8G8R8X8);
++          uint64_t pHash = MaskConfig::ComputePHash(
++              map.GetData(), elemSize.width, elemSize.height, map.GetStride(), isBGRA);
++          auto spoofed = MaskConfig::GetCanvasFingerprintByPHash(
++              elemSize.width, elemSize.height, pHash);
++          if (spoofed) {
++            // Extract base64 data from data URL
++            const std::string& dataUrl = *spoofed;
++            size_t commaPos = dataUrl.find(',');
++            if (commaPos != std::string::npos) {
++              std::string base64Data = dataUrl.substr(commaPos + 1);
++              nsAutoCString decoded;
++              nsDependentCString base64Input(base64Data.c_str());
++              if (NS_SUCCEEDED(Base64Decode(base64Input, decoded))) {
++                void* buffer = malloc(decoded.Length());
++                if (buffer) {
++                  memcpy(buffer, decoded.get(), decoded.Length());
++                  RefPtr<MemoryBlobImpl> blobImpl = new MemoryBlobImpl(
++                      buffer, decoded.Length(), u"image/png"_ns);
++                  RefPtr<Blob> blob = Blob::Create(global, blobImpl);
++                  OwnerDoc()->Dispatch(NewRunnableMethod<Blob*, const char*>(
++                      "dom::HTMLCanvasElement::ToBlob", &aCallback,
++                      static_cast<void (BlobCallback::*)(Blob*, const char*)>(
++                          &BlobCallback::Call),
++                      blob.get(), nullptr));
++                  return;
++                }
++              }
++            }
++          }
++        }
++      }
++    }
++  }
++
+   // Check site-specific permission and display prompt if appropriate.
+   // If no permission, return all-white, opaque image data.
+   CanvasUtils::ImageExtraction spoofing =
+diff --git a/dom/html/moz.build b/dom/html/moz.build
+index b8fea63105..cd24e3e902 100644
+--- a/dom/html/moz.build
++++ b/dom/html/moz.build
+@@ -204,6 +204,7 @@ include("/ipc/chromium/chromium-config.mozbuild")
+ 
+ LOCAL_INCLUDES += [
+     "!/dist/include/libwebrtc_overrides",
++    "/camoucfg",
+     "/caps",
+     "/docshell/base",
+     "/dom/base",

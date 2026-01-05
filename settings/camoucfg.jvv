@@ -279,6 +279,11 @@
 
     "canvas:aaOffset": "int",
     "canvas:aaCapOffset": "bool",
+    "canvas:fingerprints": "@CANVAS_FINGERPRINTS",
+
+    "@CANVAS_FINGERPRINTS": {
+        "/^[a-fA-F0-9]+$/": "str"
+    },
 
     "voices": "array[@VOICE_TYPE]",
     "voices:blockIfNotDefined": "bool",
@@ -323,5 +328,21 @@
 
     "websocket:remapping:enabled": "bool",
     "websocket:remapping:manualPortMappings": "array[str]",
-    "websocket:remapping:basePort": "int[>0]"
+    "websocket:remapping:basePort": "int[>0]",
+
+    "navigator.userAgentData": "bool",
+    "navigator.userAgentData:brands": "array[@UA_BRAND_TYPE]",
+    "navigator.userAgentData:mobile": "bool",
+    "navigator.userAgentData:platform": "str",
+    "navigator.userAgentData:architecture": "str",
+    "navigator.userAgentData:bitness": "str[/^(32|64)$/]",
+    "navigator.userAgentData:model": "str",
+    "navigator.userAgentData:platformVersion": "str",
+    "navigator.userAgentData:fullVersionList": "array[@UA_BRAND_TYPE]",
+    "navigator.userAgentData:wow64": "bool",
+
+    "@UA_BRAND_TYPE": {
+        "*brand": "str",
+        "*version": "str"
+    }
 }

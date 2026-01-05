@@ -1,0 +1,41 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif,
+    "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
+}
+
+/* Allow scrolling */
+html {
+  overflow-y: scroll !important;
+  overflow-x: hidden !important;
+  height: auto !important;
+  min-height: 100% !important;
+  position: static !important;
+}
+
+body {
+  overflow-y: visible !important;
+  overflow-x: hidden !important;
+  height: auto !important;
+  min-height: 100% !important;
+  position: static !important;
+  overscroll-behavior: none;
+}
+
+/* Game container specific touch prevention */
+.game-container {
+  touch-action: none;
+}
+
+/* Prevent text selection and callout on long press (only in game) */
+.game-container *:not(button):not(input):not(a) {
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* Allow touch on buttons */
+.game-container button {
+  touch-action: manipulation;
+}

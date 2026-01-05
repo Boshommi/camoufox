@@ -1,0 +1,583 @@
+diff --git a/_READY b/_READY
+new file mode 100644
+index 0000000000..e69de29bb2
+diff --git a/dom/base/Navigator.cpp b/dom/base/Navigator.cpp
+index 44d367dfe5..0ac33c42ca 100644
+--- a/dom/base/Navigator.cpp
++++ b/dom/base/Navigator.cpp
+@@ -56,6 +56,7 @@
+ #include "mozilla/dom/MediaCapabilities.h"
+ #include "mozilla/dom/MediaSession.h"
+ #include "mozilla/dom/NavigatorLogin.h"
++#include "NavigatorUAData.h"
+ #include "mozilla/dom/Permissions.h"
+ #include "mozilla/dom/PrivateAttribution.h"
+ #include "mozilla/dom/ServiceWorkerContainer.h"
+@@ -158,6 +159,7 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(Navigator)
+   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mWebGpu)
+   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mLocks)
+   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mLogin)
++  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mUserAgentData)
+   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mPrivateAttribution)
+   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mUserActivation)
+   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mWakeLock)
+@@ -2356,6 +2358,23 @@ NavigatorLogin* Navigator::Login() {
+   return mLogin;
+ }
+ 
++NavigatorUAData* Navigator::UserAgentData() {
++  // Check if userAgentData is disabled
++  if (auto enabled = MaskConfig::GetBool("navigator.userAgentData")) {
++    if (!*enabled) {
++      return nullptr;
++    }
++  }
++
++  if (!mUserAgentData) {
++    nsCOMPtr<nsIGlobalObject> global = do_QueryInterface(mWindow);
++    if (global) {
++      mUserAgentData = new NavigatorUAData(global);
++    }
++  }
++  return mUserAgentData;
++}
++
+ dom::PrivateAttribution* Navigator::PrivateAttribution() {
+   if (!mPrivateAttribution) {
+     mPrivateAttribution = new dom::PrivateAttribution(GetWindow()->AsGlobal());
+diff --git a/dom/base/Navigator.h b/dom/base/Navigator.h
+index 08e715a9d7..9b92ebadd8 100644
+--- a/dom/base/Navigator.h
++++ b/dom/base/Navigator.h
+@@ -43,6 +43,7 @@ class CredentialsContainer;
+ class Clipboard;
+ class LockManager;
+ class NavigatorLogin;
++class NavigatorUAData;
+ class PrivateAttribution;
+ class HTMLMediaElement;
+ class AudioContext;
+@@ -212,6 +213,7 @@ class Navigator final : public nsISupports, public nsWrapperCache {
+   webgpu::Instance* Gpu();
+   dom::LockManager* Locks();
+   NavigatorLogin* Login();
++  NavigatorUAData* UserAgentData();
+   dom::PrivateAttribution* PrivateAttribution();
+ 
+   static bool Webdriver();
+@@ -310,6 +312,7 @@ class Navigator final : public nsISupports, public nsWrapperCache {
+   RefPtr<Promise> mSharePromise;  // Web Share API related
+   RefPtr<LockManager> mLocks;
+   RefPtr<NavigatorLogin> mLogin;
++  RefPtr<NavigatorUAData> mUserAgentData;
+   RefPtr<dom::PrivateAttribution> mPrivateAttribution;
+   RefPtr<dom::UserActivation> mUserActivation;
+   RefPtr<dom::WakeLockJS> mWakeLock;
+diff --git a/dom/base/NavigatorUAData.cpp b/dom/base/NavigatorUAData.cpp
+new file mode 100644
+index 0000000000..a0a2a532b4
+--- /dev/null
++++ b/dom/base/NavigatorUAData.cpp
+@@ -0,0 +1,262 @@
++/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
++/* vim: set ts=8 sts=2 et sw=2 tw=80: */
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
++
++#include "NavigatorUAData.h"
++#include "MaskConfig.hpp"
++
++#include "mozilla/dom/NavigatorUADataBinding.h"
++#include "mozilla/dom/Promise.h"
++#include "nsIGlobalObject.h"
++
++namespace mozilla::dom {
++
++NS_IMPL_CYCLE_COLLECTION_WRAPPERCACHE(NavigatorUAData, mGlobal)
++
++NS_IMPL_CYCLE_COLLECTING_ADDREF(NavigatorUAData)
++NS_IMPL_CYCLE_COLLECTING_RELEASE(NavigatorUAData)
++
++NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(NavigatorUAData)
++  NS_WRAPPERCACHE_INTERFACE_MAP_ENTRY
++  NS_INTERFACE_MAP_ENTRY(nsISupports)
++NS_INTERFACE_MAP_END
++
++NavigatorUAData::NavigatorUAData(nsIGlobalObject* aGlobal)
++    : mGlobal(aGlobal), mBrandsInitialized(false) {}
++
++NavigatorUAData::~NavigatorUAData() = default;
++
++JSObject* NavigatorUAData::WrapObject(JSContext* aCx,
++                                      JS::Handle<JSObject*> aGivenProto) {
++  return NavigatorUAData_Binding::Wrap(aCx, this, aGivenProto);
++}
++
++void NavigatorUAData::InitBrands() {
++  if (mBrandsInitialized) {
++    return;
++  }
++  mBrandsInitialized = true;
++
++  auto data = MaskConfig::GetJson();
++  const char* key = "navigator.userAgentData:brands";
++
++  if (data.contains(key) && data[key].is_array()) {
++    for (const auto& item : data[key]) {
++      if (item.contains("brand") && item.contains("version")) {
++        NavigatorUABrandVersion brand;
++        brand.mBrand.Assign(
++            NS_ConvertUTF8toUTF16(item["brand"].get<std::string>()));
++        brand.mVersion.Assign(
++            NS_ConvertUTF8toUTF16(item["version"].get<std::string>()));
++        mBrands.AppendElement(brand);
++      }
++    }
++  } else {
++    // Default Chrome-like brands
++    NavigatorUABrandVersion chromium;
++    chromium.mBrand.AssignLiteral(u"Chromium");
++    chromium.mVersion.AssignLiteral(u"120");
++    mBrands.AppendElement(chromium);
++
++    NavigatorUABrandVersion notABrand;
++    notABrand.mBrand.AssignLiteral(u"Not_A Brand");
++    notABrand.mVersion.AssignLiteral(u"8");
++    mBrands.AppendElement(notABrand);
++  }
++}
++
++void NavigatorUAData::GetBrands(nsTArray<NavigatorUABrandVersion>& aBrands) {
++  InitBrands();
++  aBrands = mBrands.Clone();
++}
++
++bool NavigatorUAData::Mobile() const {
++  if (auto value = MaskConfig::GetBool("navigator.userAgentData:mobile")) {
++    return *value;
++  }
++  return false;  // Default to desktop
++}
++
++void NavigatorUAData::GetPlatform(nsAString& aPlatform) const {
++  if (auto value = MaskConfig::GetString("navigator.userAgentData:platform")) {
++    aPlatform.Assign(NS_ConvertUTF8toUTF16(*value));
++    return;
++  }
++  aPlatform.AssignLiteral(u"Windows");  // Default platform
++}
++
++already_AddRefed<Promise> NavigatorUAData::GetHighEntropyValues(
++    const Sequence<nsString>& aHints, ErrorResult& aRv) {
++  if (!mGlobal) {
++    aRv.Throw(NS_ERROR_UNEXPECTED);
++    return nullptr;
++  }
++
++  RefPtr<Promise> promise = Promise::Create(mGlobal, aRv);
++  if (aRv.Failed()) {
++    return nullptr;
++  }
++
++  UADataValues result;
++
++  // Always include low-entropy values
++  InitBrands();
++  result.mBrands.Construct(mBrands.Clone());
++  result.mMobile = Mobile();
++  GetPlatform(result.mPlatform);
++
++  auto data = MaskConfig::GetJson();
++
++  // Process requested high-entropy hints
++  for (const auto& hint : aHints) {
++    if (hint.EqualsLiteral("architecture")) {
++      if (auto value =
++              MaskConfig::GetString("navigator.userAgentData:architecture")) {
++        result.mArchitecture.Assign(NS_ConvertUTF8toUTF16(*value));
++      } else {
++        result.mArchitecture.AssignLiteral(u"x86");
++      }
++    } else if (hint.EqualsLiteral("bitness")) {
++      if (auto value =
++              MaskConfig::GetString("navigator.userAgentData:bitness")) {
++        result.mBitness.Assign(NS_ConvertUTF8toUTF16(*value));
++      } else {
++        result.mBitness.AssignLiteral(u"64");
++      }
++    } else if (hint.EqualsLiteral("model")) {
++      if (auto value = MaskConfig::GetString("navigator.userAgentData:model")) {
++        result.mModel.Assign(NS_ConvertUTF8toUTF16(*value));
++      } else {
++        result.mModel.AssignLiteral(u"");
++      }
++    } else if (hint.EqualsLiteral("platformVersion")) {
++      if (auto value =
++              MaskConfig::GetString("navigator.userAgentData:platformVersion")) {
++        result.mPlatformVersion.Assign(NS_ConvertUTF8toUTF16(*value));
++      } else {
++        result.mPlatformVersion.AssignLiteral(u"10.0.0");
++      }
++    } else if (hint.EqualsLiteral("wow64")) {
++      if (auto value = MaskConfig::GetBool("navigator.userAgentData:wow64")) {
++        result.mWow64 = *value;
++      }
++    } else if (hint.EqualsLiteral("fullVersionList")) {
++      nsTArray<NavigatorUABrandVersion> fullVersionList;
++      const char* fvlKey = "navigator.userAgentData:fullVersionList";
++      if (data.contains(fvlKey) && data[fvlKey].is_array()) {
++        for (const auto& item : data[fvlKey]) {
++          if (item.contains("brand") && item.contains("version")) {
++            NavigatorUABrandVersion brand;
++            brand.mBrand.Assign(
++                NS_ConvertUTF8toUTF16(item["brand"].get<std::string>()));
++            brand.mVersion.Assign(
++                NS_ConvertUTF8toUTF16(item["version"].get<std::string>()));
++            fullVersionList.AppendElement(brand);
++          }
++        }
++      } else {
++        // Default to same as brands but with full version
++        NavigatorUABrandVersion chromium;
++        chromium.mBrand.AssignLiteral(u"Chromium");
++        chromium.mVersion.AssignLiteral(u"120.0.0.0");
++        fullVersionList.AppendElement(chromium);
++
++        NavigatorUABrandVersion notABrand;
++        notABrand.mBrand.AssignLiteral(u"Not_A Brand");
++        notABrand.mVersion.AssignLiteral(u"8.0.0.0");
++        fullVersionList.AppendElement(notABrand);
++      }
++      result.mFullVersionList.Construct(std::move(fullVersionList));
++    }
++  }
++
++  promise->MaybeResolve(result);
++  return promise.forget();
++}
++
++void NavigatorUAData::ToJSON(JSContext* aCx,
++                             JS::MutableHandle<JSObject*> aRetval,
++                             ErrorResult& aRv) {
++  // Create a plain JS object with brands, mobile, and platform
++  JS::Rooted<JSObject*> obj(aCx, JS_NewPlainObject(aCx));
++  if (!obj) {
++    aRv.Throw(NS_ERROR_OUT_OF_MEMORY);
++    return;
++  }
++
++  // Add brands array
++  InitBrands();
++  JS::Rooted<JSObject*> brandsArray(aCx,
++                                    JS::NewArrayObject(aCx, mBrands.Length()));
++  if (!brandsArray) {
++    aRv.Throw(NS_ERROR_OUT_OF_MEMORY);
++    return;
++  }
++
++  for (uint32_t i = 0; i < mBrands.Length(); i++) {
++    JS::Rooted<JSObject*> brandObj(aCx, JS_NewPlainObject(aCx));
++    if (!brandObj) {
++      aRv.Throw(NS_ERROR_OUT_OF_MEMORY);
++      return;
++    }
++
++    JS::Rooted<JSString*> brandStr(
++        aCx, JS_NewUCStringCopyN(aCx, mBrands[i].mBrand.get(),
++                                 mBrands[i].mBrand.Length()));
++    JS::Rooted<JSString*> versionStr(
++        aCx, JS_NewUCStringCopyN(aCx, mBrands[i].mVersion.get(),
++                                 mBrands[i].mVersion.Length()));
++
++    if (!brandStr || !versionStr) {
++      aRv.Throw(NS_ERROR_OUT_OF_MEMORY);
++      return;
++    }
++
++    if (!JS_DefineProperty(aCx, brandObj, "brand", brandStr, JSPROP_ENUMERATE) ||
++        !JS_DefineProperty(aCx, brandObj, "version", versionStr,
++                           JSPROP_ENUMERATE)) {
++      aRv.Throw(NS_ERROR_FAILURE);
++      return;
++    }
++
++    JS::Rooted<JS::Value> brandVal(aCx, JS::ObjectValue(*brandObj));
++    if (!JS_SetElement(aCx, brandsArray, i, brandVal)) {
++      aRv.Throw(NS_ERROR_FAILURE);
++      return;
++    }
++  }
++
++  JS::Rooted<JS::Value> brandsVal(aCx, JS::ObjectValue(*brandsArray));
++  if (!JS_DefineProperty(aCx, obj, "brands", brandsVal, JSPROP_ENUMERATE)) {
++    aRv.Throw(NS_ERROR_FAILURE);
++    return;
++  }
++
++  // Add mobile
++  JS::Rooted<JS::Value> mobileVal(aCx, JS::BooleanValue(Mobile()));
++  if (!JS_DefineProperty(aCx, obj, "mobile", mobileVal, JSPROP_ENUMERATE)) {
++    aRv.Throw(NS_ERROR_FAILURE);
++    return;
++  }
++
++  // Add platform
++  nsString platform;
++  GetPlatform(platform);
++  JS::Rooted<JSString*> platformStr(
++      aCx, JS_NewUCStringCopyN(aCx, platform.get(), platform.Length()));
++  if (!platformStr) {
++    aRv.Throw(NS_ERROR_OUT_OF_MEMORY);
++    return;
++  }
++  JS::Rooted<JS::Value> platformVal(aCx, JS::StringValue(platformStr));
++  if (!JS_DefineProperty(aCx, obj, "platform", platformVal, JSPROP_ENUMERATE)) {
++    aRv.Throw(NS_ERROR_FAILURE);
++    return;
++  }
++
++  aRetval.set(obj);
++}
++
++}  // namespace mozilla::dom
+diff --git a/dom/base/NavigatorUAData.h b/dom/base/NavigatorUAData.h
+new file mode 100644
+index 0000000000..1129ba1137
+--- /dev/null
++++ b/dom/base/NavigatorUAData.h
+@@ -0,0 +1,56 @@
++/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
++/* vim: set ts=8 sts=2 et sw=2 tw=80: */
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
++
++#ifndef mozilla_dom_NavigatorUAData_h
++#define mozilla_dom_NavigatorUAData_h
++
++#include "mozilla/Attributes.h"
++#include "mozilla/dom/BindingDeclarations.h"
++#include "mozilla/dom/NavigatorUADataBinding.h"
++#include "nsCycleCollectionParticipant.h"
++#include "nsISupports.h"
++#include "nsWrapperCache.h"
++
++namespace mozilla::dom {
++
++class Promise;
++
++class NavigatorUAData final : public nsISupports, public nsWrapperCache {
++ public:
++  NS_DECL_CYCLE_COLLECTING_ISUPPORTS
++  NS_DECL_CYCLE_COLLECTION_WRAPPERCACHE_CLASS(NavigatorUAData)
++
++  explicit NavigatorUAData(nsIGlobalObject* aGlobal);
++
++  nsIGlobalObject* GetParentObject() const { return mGlobal; }
++
++  JSObject* WrapObject(JSContext* aCx,
++                       JS::Handle<JSObject*> aGivenProto) override;
++
++  // WebIDL methods
++  void GetBrands(nsTArray<NavigatorUABrandVersion>& aBrands);
++  bool Mobile() const;
++  void GetPlatform(nsAString& aPlatform) const;
++
++  already_AddRefed<Promise> GetHighEntropyValues(
++      const Sequence<nsString>& aHints, ErrorResult& aRv);
++
++  void ToJSON(JSContext* aCx, JS::MutableHandle<JSObject*> aRetval,
++              ErrorResult& aRv);
++
++ private:
++  ~NavigatorUAData();
++
++  void InitBrands();
++
++  nsCOMPtr<nsIGlobalObject> mGlobal;
++  nsTArray<NavigatorUABrandVersion> mBrands;
++  bool mBrandsInitialized;
++};
++
++}  // namespace mozilla::dom
++
++#endif  // mozilla_dom_NavigatorUAData_h
+diff --git a/dom/base/moz.build b/dom/base/moz.build
+index 6be22c7965..210b7a7b8c 100644
+--- a/dom/base/moz.build
++++ b/dom/base/moz.build
+@@ -222,6 +222,7 @@ EXPORTS.mozilla.dom += [
+     "MutationObservers.h",
+     "NameSpaceConstants.h",
+     "Navigator.h",
++    "NavigatorUAData.h",
+     "NodeInfo.h",
+     "NodeInfoInlines.h",
+     "NodeIterator.h",
+@@ -398,6 +399,7 @@ UNIFIED_SOURCES += [
+     "MozQueryInterface.cpp",
+     "MutationObservers.cpp",
+     "Navigator.cpp",
++    "NavigatorUAData.cpp",
+     "NodeInfo.cpp",
+     "NodeIterator.cpp",
+     "NodeUbiReporting.cpp",
+diff --git a/dom/webidl/Navigator.webidl b/dom/webidl/Navigator.webidl
+index 1fd32ac068..6a1e37058f 100644
+--- a/dom/webidl/Navigator.webidl
++++ b/dom/webidl/Navigator.webidl
+@@ -404,3 +404,9 @@ partial interface Navigator {
+ partial interface Navigator {
+   [SameObject] readonly attribute NavigatorLogin login;
+ };
++
++// https://wicg.github.io/ua-client-hints/
++partial interface Navigator {
++  [SameObject]
++  readonly attribute NavigatorUAData userAgentData;
++};
+diff --git a/dom/webidl/NavigatorUAData.webidl b/dom/webidl/NavigatorUAData.webidl
+new file mode 100644
+index 0000000000..5d5b63ae45
+--- /dev/null
++++ b/dom/webidl/NavigatorUAData.webidl
+@@ -0,0 +1,37 @@
++/* -*- Mode: IDL; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this file,
++ * You can obtain one at http://mozilla.org/MPL/2.0/.
++ *
++ * https://wicg.github.io/ua-client-hints/
++ */
++
++dictionary NavigatorUABrandVersion {
++  DOMString brand = "";
++  DOMString version = "";
++};
++
++dictionary UADataValues {
++  sequence<NavigatorUABrandVersion> brands;
++  boolean mobile = false;
++  DOMString platform = "";
++  DOMString architecture = "";
++  DOMString bitness = "";
++  DOMString model = "";
++  DOMString platformVersion = "";
++  sequence<NavigatorUABrandVersion> fullVersionList;
++  boolean wow64 = false;
++};
++
++[Exposed=(Window,Worker)]
++interface NavigatorUAData {
++  [Cached, Pure]
++  readonly attribute sequence<NavigatorUABrandVersion> brands;
++  readonly attribute boolean mobile;
++  readonly attribute DOMString platform;
++
++  [NewObject]
++  Promise<UADataValues> getHighEntropyValues(sequence<DOMString> hints);
++
++  [Default] object toJSON();
++};
+diff --git a/dom/webidl/WorkerNavigator.webidl b/dom/webidl/WorkerNavigator.webidl
+index 697b13159f..3ca2e3d791 100644
+--- a/dom/webidl/WorkerNavigator.webidl
++++ b/dom/webidl/WorkerNavigator.webidl
+@@ -46,3 +46,10 @@ partial interface WorkerNavigator {
+   [Func="ServiceWorkersEnabled", SameObject]
+   readonly attribute ServiceWorkerContainer serviceWorker;
+ };
++
++// https://wicg.github.io/ua-client-hints/
++[Exposed=Worker]
++partial interface WorkerNavigator {
++  [SameObject]
++  readonly attribute NavigatorUAData userAgentData;
++};
+diff --git a/dom/webidl/moz.build b/dom/webidl/moz.build
+index 99c38ea3a6..442714fd35 100644
+--- a/dom/webidl/moz.build
++++ b/dom/webidl/moz.build
+@@ -812,6 +812,7 @@ WEBIDL_FILES = [
+     "NavigationPreloadManager.webidl",
+     "NavigationTransition.webidl",
+     "Navigator.webidl",
++    "NavigatorUAData.webidl",
+     "NetErrorInfo.webidl",
+     "NetworkInformation.webidl",
+     "NetworkOptions.webidl",
+diff --git a/dom/workers/WorkerNavigator.cpp b/dom/workers/WorkerNavigator.cpp
+index abb16ded0a..b5bbe1bb4e 100644
+--- a/dom/workers/WorkerNavigator.cpp
++++ b/dom/workers/WorkerNavigator.cpp
+@@ -6,6 +6,7 @@
+ 
+ #include "mozilla/dom/WorkerNavigator.h"
+ #include "MaskConfig.hpp"
++#include "NavigatorUAData.h"
+ 
+ #include <utility>
+ 
+@@ -55,6 +56,7 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(WorkerNavigator)
+   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mLocks)
+   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mPermissions)
+   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mServiceWorkerContainer)
++  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mUserAgentData)
+ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
+ 
+ WorkerNavigator::WorkerNavigator(const NavigatorProperties& aProperties,
+@@ -344,4 +346,24 @@ already_AddRefed<ServiceWorkerContainer> WorkerNavigator::ServiceWorker() {
+   return ref.forget();
+ }
+ 
++NavigatorUAData* WorkerNavigator::UserAgentData() {
++  // Check if userAgentData is disabled
++  if (auto enabled = MaskConfig::GetBool("navigator.userAgentData")) {
++    if (!*enabled) {
++      return nullptr;
++    }
++  }
++
++  if (!mUserAgentData) {
++    WorkerPrivate* workerPrivate = GetCurrentThreadWorkerPrivate();
++    MOZ_ASSERT(workerPrivate);
++
++    nsIGlobalObject* global = workerPrivate->GlobalScope();
++    MOZ_ASSERT(global);
++
++    mUserAgentData = new NavigatorUAData(global);
++  }
++  return mUserAgentData;
++}
++
+ }  // namespace mozilla::dom
+diff --git a/dom/workers/WorkerNavigator.h b/dom/workers/WorkerNavigator.h
+index e6cd8c99f1..a0099bc5fe 100644
+--- a/dom/workers/WorkerNavigator.h
++++ b/dom/workers/WorkerNavigator.h
+@@ -32,6 +32,7 @@ namespace dom {
+ class StorageManager;
+ class MediaCapabilities;
+ class LockManager;
++class NavigatorUAData;
+ class Permissions;
+ class ServiceWorkerContainer;
+ 
+@@ -51,6 +52,7 @@ class WorkerNavigator final : public nsWrapperCache {
+   RefPtr<dom::LockManager> mLocks;
+   RefPtr<dom::Permissions> mPermissions;
+   RefPtr<ServiceWorkerContainer> mServiceWorkerContainer;
++  RefPtr<NavigatorUAData> mUserAgentData;
+   bool mOnline;
+ 
+   WorkerNavigator(const NavigatorProperties& aProperties, bool aOnline);
+@@ -122,6 +124,8 @@ class WorkerNavigator final : public nsWrapperCache {
+   dom::Permissions* Permissions();
+ 
+   already_AddRefed<ServiceWorkerContainer> ServiceWorker();
++
++  NavigatorUAData* UserAgentData();
+ };
+ 
+ }  // namespace dom

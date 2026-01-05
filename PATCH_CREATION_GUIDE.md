@@ -249,6 +249,265 @@ uint64_t Navigator::HardwareConcurrency() {
 }
 ```
 
+## Implementing New APIs (Not in Firefox)
+
+Sometimes you need to implement an API that doesn't exist in Firefox at all (e.g., Chromium-only APIs). This requires creating new WebIDL interfaces and C++ implementations from scratch.
+
+### Example: UA Client Hints API (`navigator.userAgentData`)
+
+The UA Client Hints API exists in Chromium but not Firefox. Here's how to implement it:
+
+### Step 1: Create WebIDL Interface
+
+Create `dom/webidl/NavigatorUAData.webidl`:
+
+```webidl
+/* -*- Mode: IDL; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this file,
+ * You can obtain one at http://mozilla.org/MPL/2.0/.
+ *
+ * https://wicg.github.io/ua-client-hints/
+ */
+
+dictionary NavigatorUABrandVersion {
+  DOMString brand = "";
+  DOMString version = "";
+};
+
+dictionary UADataValues {
+  sequence<NavigatorUABrandVersion> brands;
+  boolean mobile = false;
+  DOMString platform = "";
+  DOMString architecture = "";
+  // ... other fields
+};
+
+[Exposed=(Window,Worker)]
+interface NavigatorUAData {
+  [Cached, Pure]
+  readonly attribute sequence<NavigatorUABrandVersion> brands;
+  readonly attribute boolean mobile;
+  readonly attribute DOMString platform;
+
+  [NewObject]
+  Promise<UADataValues> getHighEntropyValues(sequence<DOMString> hints);
+
+  [Default] object toJSON();
+};
+```
+
+**⚠️ WebIDL Gotchas:**
+
+- Use `sequence<T>` with `[Cached, Pure]` instead of `FrozenArray<T>` for dictionary types
+- Firefox's WebIDL parser doesn't support `FrozenArray<dictionary>`
+- Dictionary members with default values (e.g., `boolean mobile = false`) are NOT `Optional<>` types
+- Dictionary members WITHOUT defaults (e.g., `sequence<T> brands`) ARE `Optional<>` and need `.Construct()`
+
+### Step 2: Create C++ Header
+
+Create `dom/base/NavigatorUAData.h`:
+
+```cpp
+#ifndef mozilla_dom_NavigatorUAData_h
+#define mozilla_dom_NavigatorUAData_h
+
+#include "mozilla/dom/NavigatorUADataBinding.h"
+#include "nsCycleCollectionParticipant.h"
+#include "nsWrapperCache.h"
+
+namespace mozilla::dom {
+
+class NavigatorUAData final : public nsISupports, public nsWrapperCache {
+ public:
+  NS_DECL_CYCLE_COLLECTING_ISUPPORTS
+  NS_DECL_CYCLE_COLLECTION_WRAPPERCACHE_CLASS(NavigatorUAData)
+
+  explicit NavigatorUAData(nsIGlobalObject* aGlobal);
+
+  nsIGlobalObject* GetParentObject() const { return mGlobal; }
+  JSObject* WrapObject(JSContext* aCx, JS::Handle<JSObject*> aGivenProto) override;
+
+  // WebIDL methods
+  void GetBrands(nsTArray<NavigatorUABrandVersion>& aBrands);
+  bool Mobile() const;
+  void GetPlatform(nsAString& aPlatform) const;
+  already_AddRefed<Promise> GetHighEntropyValues(
+      const Sequence<nsString>& aHints, ErrorResult& aRv);
+  void ToJSON(JSContext* aCx, JS::MutableHandle<JSObject*> aRetval, ErrorResult& aRv);
+
+ private:
+  ~NavigatorUAData();
+  nsCOMPtr<nsIGlobalObject> mGlobal;
+  nsTArray<NavigatorUABrandVersion> mBrands;
+};
+
+}  // namespace mozilla::dom
+
+#endif
+```
+
+### Step 3: Create C++ Implementation
+
+Create `dom/base/NavigatorUAData.cpp`:
+
+```cpp
+#include "NavigatorUAData.h"
+#include "MaskConfig.hpp"
+#include "mozilla/dom/Promise.h"
+
+namespace mozilla::dom {
+
+NS_IMPL_CYCLE_COLLECTION_WRAPPERCACHE(NavigatorUAData, mGlobal)
+NS_IMPL_CYCLE_COLLECTING_ADDREF(NavigatorUAData)
+NS_IMPL_CYCLE_COLLECTING_RELEASE(NavigatorUAData)
+
+NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(NavigatorUAData)
+  NS_WRAPPERCACHE_INTERFACE_MAP_ENTRY
+  NS_INTERFACE_MAP_ENTRY(nsISupports)
+NS_INTERFACE_MAP_END
+
+NavigatorUAData::NavigatorUAData(nsIGlobalObject* aGlobal) : mGlobal(aGlobal) {}
+NavigatorUAData::~NavigatorUAData() = default;
+
+JSObject* NavigatorUAData::WrapObject(JSContext* aCx,
+                                      JS::Handle<JSObject*> aGivenProto) {
+  return NavigatorUAData_Binding::Wrap(aCx, this, aGivenProto);
+}
+
+bool NavigatorUAData::Mobile() const {
+  if (auto value = MaskConfig::GetBool("navigator.userAgentData:mobile")) {
+    return *value;
+  }
+  return false;
+}
+
+// ... implement other methods
+}
+```
+
+### Step 4: Register in moz.build Files
+
+**A. Register WebIDL (`dom/webidl/moz.build`):**
+
+```python
+WEBIDL_FILES += [
+    # ... existing files ...
+    "NavigatorUAData.webidl",  # Add alphabetically
+]
+```
+
+**B. Register C++ files (`dom/base/moz.build`):**
+
+```python
+EXPORTS.mozilla.dom += [
+    # ... existing exports ...
+    "NavigatorUAData.h",
+]
+
+UNIFIED_SOURCES += [
+    # ... existing sources ...
+    "NavigatorUAData.cpp",
+]
+```
+
+### Step 5: Wire Up to Navigator Interface
+
+**A. Add to Navigator.webidl:**
+
+```webidl
+// https://wicg.github.io/ua-client-hints/
+partial interface Navigator {
+  [SameObject]
+  readonly attribute NavigatorUAData userAgentData;
+};
+```
+
+**B. Add to WorkerNavigator.webidl:**
+
+```webidl
+// https://wicg.github.io/ua-client-hints/
+[Exposed=Worker]
+partial interface WorkerNavigator {
+  [SameObject]
+  readonly attribute NavigatorUAData userAgentData;
+};
+```
+
+**C. Update Navigator.h:**
+
+```cpp
+// Forward declaration
+class NavigatorUAData;
+
+class Navigator final : public nsISupports, public nsWrapperCache {
+  // ...
+  NavigatorUAData* UserAgentData();
+  // ...
+ private:
+  RefPtr<NavigatorUAData> mUserAgentData;
+};
+```
+
+**D. Update Navigator.cpp:**
+
+```cpp
+#include "NavigatorUAData.h"
+
+// Add to cycle collection
+NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mUserAgentData)
+
+NavigatorUAData* Navigator::UserAgentData() {
+  // Conditional enable - return nullptr to hide the API
+  if (auto enabled = MaskConfig::GetBool("navigator.userAgentData")) {
+    if (!*enabled) {
+      return nullptr;
+    }
+  }
+
+  if (!mUserAgentData) {
+    nsCOMPtr<nsIGlobalObject> global = do_QueryInterface(mWindow);
+    if (global) {
+      mUserAgentData = new NavigatorUAData(global);
+    }
+  }
+  return mUserAgentData;
+}
+```
+
+**E. Repeat for WorkerNavigator.h and WorkerNavigator.cpp**
+
+### Step 6: Handle Dictionary Member Types
+
+When working with WebIDL dictionaries in C++:
+
+```cpp
+// Dictionary members WITH defaults - direct assignment
+result.mMobile = Mobile();
+result.mPlatform.AssignLiteral(u"Windows");
+
+// Dictionary members WITHOUT defaults - use .Construct()
+result.mBrands.Construct(mBrands.Clone());
+result.mFullVersionList.Construct(std::move(fullVersionList));
+```
+
+### New API Checklist
+
+- [ ] Create WebIDL interface file (`dom/webidl/YourAPI.webidl`)
+- [ ] Create C++ header (`dom/base/YourAPI.h`)
+- [ ] Create C++ implementation (`dom/base/YourAPI.cpp`)
+- [ ] Register WebIDL in `dom/webidl/moz.build`
+- [ ] Register C++ files in `dom/base/moz.build` (EXPORTS and UNIFIED_SOURCES)
+- [ ] Add partial interface to `Navigator.webidl`
+- [ ] Add partial interface to `WorkerNavigator.webidl`
+- [ ] Update `Navigator.h` (forward decl, method, member)
+- [ ] Update `Navigator.cpp` (include, cycle collection, implementation)
+- [ ] Update `WorkerNavigator.h` (forward decl, method, member)
+- [ ] Update `WorkerNavigator.cpp` (include, cycle collection, implementation)
+- [ ] Add config properties to `settings/properties.json`
+- [ ] Add validation to `settings/camoucfg.jvv`
+- [ ] Test in main thread and workers
+
 ## File Organization
 
 ### Required Files for a Complete Feature

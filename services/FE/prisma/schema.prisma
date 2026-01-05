@@ -1,0 +1,40 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+// NOTE: When using mysql or sqlserver, uncomment the //@db.Text annotations in model Account below
+// Further reading:
+// https://www.prisma.io/docs/reference/api-reference/prisma-schema-reference#string
+
+datasource db {
+  provider = "sqlite"
+}
+
+model CanvasFingerprint {
+  id        String @id @default(cuid())
+  hash      String
+  width     Int
+  height    Int
+  method    String // toDataURL, toBlob, etc.
+  sourceUrl String // URL where canvas was captured
+  pixelData String // base64 encoded image data
+
+  createdAt DateTime @default(now())
+
+  renders CanvasRender[]
+
+  @@unique([hash])
+}
+
+model CanvasRender {
+  id String @id @default(cuid())
+
+  fingerprintId String
+  fingerprint   CanvasFingerprint @relation(fields: [fingerprintId], references: [id], onDelete: Cascade)
+
+  deviceInfo String // User agent or device identifier
+  dataURL    String // Rendered base64 image
+  createdAt  DateTime @default(now())
+
+  @@map("canvas_render")
+}

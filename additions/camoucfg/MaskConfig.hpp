@@ -18,6 +18,7 @@ Written by daijro.
 #include <cstddef>
 #include <vector>
 #include <algorithm>
+#include <cstring>
 
 #ifdef _WIN32
 #  include <windows.h>
@@ -372,8 +373,176 @@ inline std::optional<std::vector<PluginData>> MPlugins() {
     
     plugins.push_back(plugin);
   }
-  
+
   return plugins;
+}
+
+// Helper struct for User-Agent Client Hints brand data
+struct UABrand {
+  std::string brand;
+  std::string version;
+};
+
+// Get User-Agent Client Hints brands array from config
+inline std::optional<std::vector<UABrand>> GetUABrands(const std::string& key) {
+  auto data = GetJson();
+  if (!data.contains(key) || !data[key].is_array()) {
+    return std::nullopt;
+  }
+
+  std::vector<UABrand> brands;
+  for (const auto& item : data[key]) {
+    if (item.contains("brand") && item.contains("version")) {
+      brands.push_back({
+        item["brand"].get<std::string>(),
+        item["version"].get<std::string>()
+      });
+    }
+  }
+  return brands;
+}
+
+// Hamming distance between two 64-bit values
+inline int HammingDistance(uint64_t a, uint64_t b) {
+  uint64_t x = a ^ b;
+  int count = 0;
+  while (x) {
+    count += x & 1;
+    x >>= 1;
+  }
+  return count;
+}
+
+// Parse pHash string "WxH_XXXXXXXXXXXXXXXX" into components
+inline bool ParsePHash(const std::string& str, int& width, int& height, uint64_t& hash) {
+  size_t xPos = str.find('x');
+  size_t uPos = str.find('_');
+  if (xPos == std::string::npos || uPos == std::string::npos) return false;
+  if (xPos == 0 || uPos <= xPos + 1 || uPos + 1 >= str.size()) return false;
+
+  // Parse width
+  char* endPtr = nullptr;
+  long w = strtol(str.c_str(), &endPtr, 10);
+  if (endPtr != str.c_str() + xPos || w <= 0) return false;
+
+  // Parse height
+  long h = strtol(str.c_str() + xPos + 1, &endPtr, 10);
+  if (endPtr != str.c_str() + uPos || h <= 0) return false;
+
+  // Parse hash (16 hex chars)
+  unsigned long long hv = strtoull(str.c_str() + uPos + 1, &endPtr, 16);
+  if (*endPtr != '\0') return false;
+
+  width = (int)w;
+  height = (int)h;
+  hash = (uint64_t)hv;
+  return true;
+}
+
+// Compute perceptual hash (pHash) from pixel data
+// pixelData: RGBA or BGRA format, 4 bytes per pixel
+// stride: bytes per row (may include padding, use width*4 if no padding)
+// isBGRA: true if format is BGRA (B at idx, G at idx+1, R at idx+2)
+// Returns 64-bit hash based on visual structure
+inline uint64_t ComputePHash(const uint8_t* pixelData, int width, int height,
+                             int stride, bool isBGRA = false) {
+  constexpr int gridSize = 8;
+  double grid[64];
+
+  double cellWidth = static_cast<double>(width) / gridSize;
+  double cellHeight = static_cast<double>(height) / gridSize;
+
+  for (int gy = 0; gy < gridSize; gy++) {
+    for (int gx = 0; gx < gridSize; gx++) {
+      double sum = 0.0;
+      int count = 0;
+
+      int startX = static_cast<int>(gx * cellWidth);
+      int endX = static_cast<int>((gx + 1) * cellWidth);
+      int startY = static_cast<int>(gy * cellHeight);
+      int endY = static_cast<int>((gy + 1) * cellHeight);
+
+      for (int y = startY; y < endY; y++) {
+        for (int x = startX; x < endX; x++) {
+          // Use stride for row offset, not width*4
+          int idx = y * stride + x * 4;
+          uint8_t r, g, b;
+          if (isBGRA) {
+            b = pixelData[idx];
+            g = pixelData[idx + 1];
+            r = pixelData[idx + 2];
+          } else {
+            r = pixelData[idx];
+            g = pixelData[idx + 1];
+            b = pixelData[idx + 2];
+          }
+          // Grayscale using luminance formula
+          double gray = 0.299 * r + 0.587 * g + 0.114 * b;
+          sum += gray;
+          count++;
+        }
+      }
+
+      grid[gy * gridSize + gx] = count > 0 ? sum / count : 0.0;
+    }
+  }
+
+  // Compute median by sorting
+  double sorted[64];
+  std::memcpy(sorted, grid, sizeof(grid));
+  std::sort(sorted, sorted + 64);
+  double median = (sorted[31] + sorted[32]) / 2.0;
+
+  // Create 64-bit hash: 1 if above median, 0 otherwise
+  uint64_t hash = 0;
+  for (int i = 0; i < 64; i++) {
+    if (grid[i] > median) {
+      hash |= (1ULL << (63 - i));
+    }
+  }
+
+  return hash;
+}
+
+// Lookup canvas fingerprint by pHash with Hamming distance ≤ 5
+inline std::optional<std::string> GetCanvasFingerprintByPHash(
+    int width, int height, uint64_t pHash) {
+  const auto& data = GetJson();
+  if (!data.contains("canvas:fingerprints") ||
+      !data["canvas:fingerprints"].is_object()) {
+    return std::nullopt;
+  }
+
+  const auto& fingerprints = data["canvas:fingerprints"];
+
+  for (auto& [key, value] : fingerprints.items()) {
+    int storedWidth, storedHeight;
+    uint64_t storedHash;
+
+    if (!ParsePHash(key, storedWidth, storedHeight, storedHash)) continue;
+
+    // Dimensions must match exactly
+    if (storedWidth != width || storedHeight != height) continue;
+
+    // Hamming distance ≤ 10 (allows ~15% difference for font/rendering variations)
+    int distance = HammingDistance(pHash, storedHash);
+    printf_stderr("[CANVAS] Comparing: computed=%016llx stored=%016llx distance=%d key=%s\n",
+                  (unsigned long long)pHash, (unsigned long long)storedHash, distance, key.c_str());
+    if (distance <= 10) {
+      printf_stderr("[CANVAS] pHash MATCH! Spoofing canvas.\n");
+      return value.get<std::string>();
+    }
+  }
+
+  return std::nullopt;
+}
+
+// Check if canvas fingerprint spoofing is enabled
+inline bool HasCanvasFingerprints() {
+  const auto& data = GetJson();
+  return data.contains("canvas:fingerprints") &&
+         data["canvas:fingerprints"].is_object() &&
+         !data["canvas:fingerprints"].empty();
 }
 
 }  // namespace MaskConfig

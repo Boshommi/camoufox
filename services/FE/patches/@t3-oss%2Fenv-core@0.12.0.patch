@@ -1,0 +1,34 @@
+rdiff --git a/dist/index.d.ts b/dist/index.d.ts
+index 2846716f3157daaf6ee354239613181d446b3021..758d2e515a1d2623108ec057aee99fe4eaabab2f 100644
+--- a/dist/index.d.ts
++++ b/dist/index.d.ts
+@@ -106,6 +106,12 @@ interface BaseOptions<TShared extends Record<string, StandardSchemaV1>, TExtends
+      * @default false
+      */
+     skipValidation?: boolean;
++    /**
++     * Whether to skip validation of server-side environment variables only.
++     * Useful for build-time where server secrets aren't available.
++     * @default false
++     */
++    skipServerValidation?: boolean;
+     /**
+      * By default, this library will feed the environment variables directly to
+      * the Zod validator.
+diff --git a/dist/index.js b/dist/index.js
+index c537ec9158f245536332840002a363037ee2595b..a0c38554cc5de50be75179ecd6503f02e35ccad4 100644
+--- a/dist/index.js
++++ b/dist/index.js
+@@ -47,8 +47,11 @@ function createEnv(opts) {
+     const _server = typeof opts.server === "object" ? opts.server : {};
+     const _shared = typeof opts.shared === "object" ? opts.shared : {};
+     const isServer = opts.isServer ?? (typeof window === "undefined" || "Deno" in window);
++    // PATCHED: Skip server validation at build time (when skipServerValidation is true)
++    const skipServerValidation = !!opts.skipServerValidation;
++    const serverSchema = skipServerValidation ? {} : _server;
+     const finalSchema = isServer ? {
+-        ..._server,
++        ...serverSchema,
+         ..._shared,
+         ..._client
+     } : {

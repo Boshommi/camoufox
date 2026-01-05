@@ -89,6 +89,7 @@
     { "property": "webGl2:contextAttributes", "type": "dict" },
     { "property": "canvas:aaOffset", "type": "int" },
     { "property": "canvas:aaCapOffset", "type": "bool" },
+    { "property": "canvas:fingerprints", "type": "dict" },
     { "property": "voices", "type": "array" },
     { "property": "voices:blockIfNotDefined", "type": "bool" },
     { "property": "voices:fakeCompletion", "type": "bool" },
@@ -115,5 +116,15 @@
     { "property": "net-info-api:downlink", "type": "double" },
     { "property": "net-info-api:downlinkMax", "type": "double" },
     { "property": "net-info-api:rtt", "type": "double" },
-    { "property": "net-info-api:saveData", "type": "bool" }
+    { "property": "net-info-api:saveData", "type": "bool" },
+    { "property": "navigator.userAgentData", "type": "bool" },
+    { "property": "navigator.userAgentData:brands", "type": "array" },
+    { "property": "navigator.userAgentData:mobile", "type": "bool" },
+    { "property": "navigator.userAgentData:platform", "type": "str" },
+    { "property": "navigator.userAgentData:architecture", "type": "str" },
+    { "property": "navigator.userAgentData:bitness", "type": "str" },
+    { "property": "navigator.userAgentData:model", "type": "str" },
+    { "property": "navigator.userAgentData:platformVersion", "type": "str" },
+    { "property": "navigator.userAgentData:fullVersionList", "type": "array" },
+    { "property": "navigator.userAgentData:wow64", "type": "bool" }
 ]
