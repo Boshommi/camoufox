@@ -65,6 +65,18 @@ with Camoufox(
             {"brand": "Not_A Brand", "version": "8.0.0.0"},
         ],
         "navigator.userAgentData:wow64": False,
+        # Media Query spoofing
+        "mediaQuery:prefers-color-scheme": "dark",
+        "mediaQuery:prefers-reduced-motion": "reduce",
+        "mediaQuery:prefers-contrast": "no-preference",
+        "mediaQuery:forced-colors": "none",
+        "mediaQuery:inverted-colors": "none",
+        "mediaQuery:pointer": "fine",
+        "mediaQuery:hover": "hover",
+        "mediaQuery:any-pointer": "fine",
+        "mediaQuery:any-hover": "hover",
+        "mediaQuery:monochrome": False,
+        "mediaQuery:color": True,
         # Plugin spoofing
         "navigator.plugins": [
             {

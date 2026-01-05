@@ -1,0 +1,203 @@
+diff --git a/layout/base/moz.build b/layout/base/moz.build
+index cfd8e1e9e3..ef99ceb539 100644
+--- a/layout/base/moz.build
++++ b/layout/base/moz.build
+@@ -153,6 +153,9 @@ LOCAL_INCLUDES += [
+     "/view",
+ ]
+ 
++# DOM Mask
++LOCAL_INCLUDES += ["/camoucfg"]
++
+ if CONFIG["MOZ_WIDGET_TOOLKIT"] == "android":
+     LOCAL_INCLUDES += [
+         "/widget/android",
+diff --git a/layout/base/nsPresContext.cpp b/layout/base/nsPresContext.cpp
+index c1cc9a6505..e4a9157cd7 100644
+--- a/layout/base/nsPresContext.cpp
++++ b/layout/base/nsPresContext.cpp
+@@ -96,6 +96,7 @@
+ #include "nsTransitionManager.h"
+ #include "nsViewManager.h"
+ #include "prenv.h"
++#include "MaskConfig.hpp"
+ #ifdef ACCESSIBILITY
+ #  include "mozilla/a11y/DocAccessible.h"
+ #endif
+@@ -781,6 +782,15 @@ void nsPresContext::UpdateForcedColors(bool aNotify) {
+   }
+ }
+ 
++StyleForcedColors nsPresContext::ForcedColors() const {
++  // Spoofing check for forced-colors media query
++  if (auto value = MaskConfig::GetString("mediaQuery:forced-colors")) {
++    if (*value == "active") return StyleForcedColors::Active;
++    return StyleForcedColors::None;
++  }
++  return mForcedColors;
++}
++
+ bool nsPresContext::ForcingColors() const {
+   return mForcedColors == StyleForcedColors::Active;
+ }
+diff --git a/layout/base/nsPresContext.h b/layout/base/nsPresContext.h
+index e1186f0b9f..0fa8595a1d 100644
+--- a/layout/base/nsPresContext.h
++++ b/layout/base/nsPresContext.h
+@@ -368,7 +368,7 @@ class nsPresContext : public nsISupports,
+     return mozilla::PreferenceSheet::PrefsFor(*mDocument);
+   }
+ 
+-  mozilla::StyleForcedColors ForcedColors() const { return mForcedColors; }
++  mozilla::StyleForcedColors ForcedColors() const;
+   bool ForcingColors() const;
+ 
+   mozilla::ColorScheme DefaultBackgroundColorScheme() const;
+diff --git a/layout/style/moz.build b/layout/style/moz.build
+index 9a3b635f22..400b1a4e8b 100644
+--- a/layout/style/moz.build
++++ b/layout/style/moz.build
+@@ -295,6 +295,8 @@ LOCAL_INCLUDES += [
+     "../base",
+     "../generic",
+     "../xul",
++    # Camoufox MaskConfig
++    "/camoucfg",
+     "/dom/base",
+     "/dom/html",
+     "/dom/xul",
+diff --git a/layout/style/nsMediaFeatures.cpp b/layout/style/nsMediaFeatures.cpp
+index 982a8b1aa6..05e80f1c10 100644
+--- a/layout/style/nsMediaFeatures.cpp
++++ b/layout/style/nsMediaFeatures.cpp
+@@ -30,6 +30,7 @@
+ #include "nsIWidget.h"
+ #include "nsPresContext.h"
+ #include "nsStyleConsts.h"
++#include "MaskConfig.hpp"
+ #ifdef XP_WIN
+ #  include "mozilla/WindowsVersion.h"
+ #endif
+@@ -124,6 +125,11 @@ int32_t Gecko_MediaFeatures_GetMonochromeBitsPerPixel(
+   // from the hardware, so it seems silly to do so.
+   static constexpr int32_t kDefaultMonochromeBpp = 8;
+ 
++  // Spoofing check for monochrome media query
++  if (auto value = MaskConfig::GetBool("mediaQuery:monochrome")) {
++    return *value ? kDefaultMonochromeBpp : 0;
++  }
++
+   nsPresContext* pc = aDocument->GetPresContext();
+   if (!pc) {
+     return 0;
+@@ -154,6 +160,11 @@ StyleColorGamut Gecko_MediaFeatures_ColorGamut(const Document* aDocument) {
+ }
+ 
+ int32_t Gecko_MediaFeatures_GetColorDepth(const Document* aDocument) {
++  // Spoofing check for color media query - when false, return 0 (no color)
++  if (auto value = MaskConfig::GetBool("mediaQuery:color")) {
++    if (!*value) return 0;
++  }
++
+   if (Gecko_MediaFeatures_GetMonochromeBitsPerPixel(aDocument) != 0) {
+     // If we're a monochrome device, then the color depth is zero.
+     return 0;
+@@ -259,6 +270,11 @@ bool Gecko_MediaFeatures_MatchesPlatform(StylePlatform aPlatform) {
+ }
+ 
+ bool Gecko_MediaFeatures_PrefersReducedMotion(const Document* aDocument) {
++  // Spoofing check for prefers-reduced-motion media query
++  if (auto value = MaskConfig::GetString("mediaQuery:prefers-reduced-motion")) {
++    return *value == "reduce";
++  }
++
+   return aDocument->PrefersReducedMotion();
+ }
+ 
+@@ -273,6 +289,12 @@ bool Gecko_MediaFeatures_PrefersReducedTransparency(const Document* aDocument) {
+ 
+ StylePrefersColorScheme Gecko_MediaFeatures_PrefersColorScheme(
+     const Document* aDocument, bool aUseContent) {
++  // Spoofing check for prefers-color-scheme media query
++  if (auto value = MaskConfig::GetString("mediaQuery:prefers-color-scheme")) {
++    if (*value == "dark") return StylePrefersColorScheme::Dark;
++    return StylePrefersColorScheme::Light;
++  }
++
+   auto scheme = aUseContent ? PreferenceSheet::ContentPrefs().mColorScheme
+                             : aDocument->PreferredColorScheme();
+   return scheme == ColorScheme::Dark ? StylePrefersColorScheme::Dark
+@@ -289,6 +311,14 @@ bool Gecko_MediaFeatures_MacRTL(const Document* aDocument) {
+ // as a signal.
+ StylePrefersContrast Gecko_MediaFeatures_PrefersContrast(
+     const Document* aDocument) {
++  // Spoofing check for prefers-contrast media query
++  if (auto value = MaskConfig::GetString("mediaQuery:prefers-contrast")) {
++    if (*value == "more") return StylePrefersContrast::More;
++    if (*value == "less") return StylePrefersContrast::Less;
++    if (*value == "custom") return StylePrefersContrast::Custom;
++    return StylePrefersContrast::NoPreference;
++  }
++
+   if (auto* bc = aDocument->GetBrowsingContext()) {
+     switch (bc->Top()->PrefersContrastOverride()) {
+       case dom::PrefersContrastOverride::No_preference:
+@@ -325,6 +355,11 @@ StylePrefersContrast Gecko_MediaFeatures_PrefersContrast(
+ }
+ 
+ bool Gecko_MediaFeatures_InvertedColors(const Document* aDocument) {
++  // Spoofing check for inverted-colors media query
++  if (auto value = MaskConfig::GetString("mediaQuery:inverted-colors")) {
++    return *value == "inverted";
++  }
++
+   if (aDocument->ShouldResistFingerprinting(RFPTarget::CSSInvertedColors)) {
+     return false;
+   }
+@@ -404,12 +439,46 @@ static PointerCapabilities GetPointerCapabilities(const Document* aDocument,
+ 
+ PointerCapabilities Gecko_MediaFeatures_PrimaryPointerCapabilities(
+     const Document* aDocument) {
++  // Spoofing check for pointer/hover media queries
++  if (auto pointerValue = MaskConfig::GetString("mediaQuery:pointer")) {
++    PointerCapabilities caps = PointerCapabilities(0);
++    if (*pointerValue == "fine") {
++      caps = PointerCapabilities::Fine;
++    } else if (*pointerValue == "coarse") {
++      caps = PointerCapabilities::Coarse;
++    }
++    // Check hover capability
++    if (auto hoverValue = MaskConfig::GetString("mediaQuery:hover")) {
++      if (*hoverValue == "hover") {
++        caps = caps | PointerCapabilities::Hover;
++      }
++    }
++    return caps;
++  }
++
+   return GetPointerCapabilities(aDocument,
+                                 LookAndFeel::IntID::PrimaryPointerCapabilities);
+ }
+ 
+ PointerCapabilities Gecko_MediaFeatures_AllPointerCapabilities(
+     const Document* aDocument) {
++  // Spoofing check for any-pointer/any-hover media queries
++  if (auto pointerValue = MaskConfig::GetString("mediaQuery:any-pointer")) {
++    PointerCapabilities caps = PointerCapabilities(0);
++    if (*pointerValue == "fine") {
++      caps = PointerCapabilities::Fine;
++    } else if (*pointerValue == "coarse") {
++      caps = PointerCapabilities::Coarse;
++    }
++    // Check any-hover capability
++    if (auto hoverValue = MaskConfig::GetString("mediaQuery:any-hover")) {
++      if (*hoverValue == "hover") {
++        caps = caps | PointerCapabilities::Hover;
++      }
++    }
++    return caps;
++  }
++
+   return GetPointerCapabilities(aDocument,
+                                 LookAndFeel::IntID::AllPointerCapabilities);
+ }

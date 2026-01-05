@@ -126,5 +126,16 @@
     { "property": "navigator.userAgentData:model", "type": "str" },
     { "property": "navigator.userAgentData:platformVersion", "type": "str" },
     { "property": "navigator.userAgentData:fullVersionList", "type": "array" },
-    { "property": "navigator.userAgentData:wow64", "type": "bool" }
+    { "property": "navigator.userAgentData:wow64", "type": "bool" },
+    { "property": "mediaQuery:prefers-color-scheme", "type": "str" },
+    { "property": "mediaQuery:prefers-reduced-motion", "type": "str" },
+    { "property": "mediaQuery:prefers-contrast", "type": "str" },
+    { "property": "mediaQuery:forced-colors", "type": "str" },
+    { "property": "mediaQuery:inverted-colors", "type": "str" },
+    { "property": "mediaQuery:pointer", "type": "str" },
+    { "property": "mediaQuery:hover", "type": "str" },
+    { "property": "mediaQuery:any-pointer", "type": "str" },
+    { "property": "mediaQuery:any-hover", "type": "str" },
+    { "property": "mediaQuery:monochrome", "type": "bool" },
+    { "property": "mediaQuery:color", "type": "bool" }
 ]

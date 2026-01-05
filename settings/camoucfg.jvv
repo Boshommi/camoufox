@@ -344,5 +344,17 @@
     "@UA_BRAND_TYPE": {
         "*brand": "str",
         "*version": "str"
-    }
+    },
+
+    "mediaQuery:prefers-color-scheme$__MQ": "str[dark, light]",
+    "mediaQuery:prefers-reduced-motion$__MQ": "str[reduce, no-preference]",
+    "mediaQuery:prefers-contrast$__MQ": "str[more, less, no-preference, custom]",
+    "mediaQuery:forced-colors$__MQ": "str[active, none]",
+    "mediaQuery:inverted-colors$__MQ": "str[inverted, none]",
+    "mediaQuery:pointer$__MQ": "str[fine, coarse, none]",
+    "mediaQuery:hover$__MQ": "str[hover, none]",
+    "mediaQuery:any-pointer$__MQ": "str[fine, coarse, none]",
+    "mediaQuery:any-hover$__MQ": "str[hover, none]",
+    "mediaQuery:monochrome$__MQ": "bool",
+    "mediaQuery:color$__MQ": "bool"
 }

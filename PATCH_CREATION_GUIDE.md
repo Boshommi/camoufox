@@ -551,6 +551,107 @@ LOCAL_INCLUDES += ["/camoucfg"]
 
 **Solution:** Also patch `dom/workers/WorkerNavigator.cpp` for worker support
 
+### ❌ Problem: `LOCAL_INCLUDES` UnsortedError
+
+**Solution:** Mozilla's build system requires `LOCAL_INCLUDES` to be **alphabetically sorted**. The sort order is:
+1. Relative paths first (`../base`, `../generic`, etc.)
+2. Then absolute paths alphabetically (`/camoucfg`, `/dom/base`, `/dom/html`, etc.)
+
+```python
+# ✅ Correct - alphabetically sorted
+LOCAL_INCLUDES += [
+    "../base",
+    "../generic",
+    "/camoucfg",      # /c comes before /d
+    "/dom/base",
+    "/dom/html",
+]
+
+# ❌ Wrong - will cause UnsortedError
+LOCAL_INCLUDES += [
+    "../base",
+    "/dom/base",
+    "/camoucfg",      # Out of order!
+]
+```
+
+### ❌ Problem: `MaskConfig.hpp not found` during Servo Bindings Generation
+
+**Cause:** You included `MaskConfig.hpp` in a **header file** (`.h`), not a `.cpp` file. Servo bindings are generated early in the build process, before `camoucfg` exports its headers to `dist/include`.
+
+**Solution:** Never include `MaskConfig.hpp` in header files. Only include it in `.cpp` files.
+
+If you need MaskConfig in a method defined inline in a header:
+1. Change the inline implementation to just a **declaration** in the header
+2. Move the **implementation** to the `.cpp` file
+3. Add `#include "MaskConfig.hpp"` to the `.cpp` file
+
+```cpp
+// ❌ Wrong - nsPresContext.h (header file)
+#include "MaskConfig.hpp"  // Will fail during Servo bindings!
+
+mozilla::StyleForcedColors ForcedColors() const {
+  if (auto value = MaskConfig::GetString("mediaQuery:forced-colors")) {
+    // ...
+  }
+  return mForcedColors;
+}
+
+// ✅ Correct - nsPresContext.h (declaration only)
+mozilla::StyleForcedColors ForcedColors() const;
+
+// ✅ Correct - nsPresContext.cpp (implementation)
+#include "MaskConfig.hpp"
+
+StyleForcedColors nsPresContext::ForcedColors() const {
+  if (auto value = MaskConfig::GetString("mediaQuery:forced-colors")) {
+    if (*value == "active") return StyleForcedColors::Active;
+    return StyleForcedColors::None;
+  }
+  return mForcedColors;
+}
+```
+
+### ❌ Problem: `cannot use 'throw' with exceptions disabled` in json.hpp
+
+**Cause:** Firefox builds with `-fno-exceptions`, but nlohmann/json uses `throw` by default.
+
+**Solution:** Add `JSON_NOEXCEPTION` define at the top of `additions/camoucfg/json.hpp`:
+
+```cpp
+// Disable exceptions for Mozilla Firefox build (uses -fno-exceptions)
+#ifndef JSON_NOEXCEPTION
+#define JSON_NOEXCEPTION 1
+#endif
+
+#ifndef INCLUDE_NLOHMANN_JSON_HPP_
+#define INCLUDE_NLOHMANN_JSON_HPP_
+// ... rest of json.hpp
+```
+
+### ❌ Problem: Canvas/Image Data Stride vs Width
+
+**Cause:** When working with `DataSourceSurface` pixel data, the stride (bytes per row) may be larger than `width * 4` due to memory alignment padding.
+
+**Solution:** Always use `GetStride()` instead of assuming `width * 4`:
+
+```cpp
+RefPtr<gfx::DataSourceSurface> dataSurface = surface->GetDataSurface();
+gfx::DataSourceSurface::ScopedMap map(dataSurface, gfx::DataSourceSurface::READ);
+
+int32_t width = dataSurface->GetSize().width;
+int32_t height = dataSurface->GetSize().height;
+int32_t stride = map.GetStride();  // ✅ Use actual stride, not width * 4
+
+const uint8_t* data = map.GetData();
+for (int y = 0; y < height; y++) {
+  const uint8_t* row = data + y * stride;  // ✅ Correct row offset
+  for (int x = 0; x < width; x++) {
+    // Access pixel at row[x * 4 + channel]
+  }
+}
+```
+
 ## Patch Naming Convention
 
 Follow this naming pattern:
