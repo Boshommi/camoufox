@@ -1,7 +1,17 @@
 "use client";
 
-import { useState, useEffect, useRef, useMemo } from "react";
+import { useState, useEffect, useRef, useCallback, Suspense } from "react";
+import { useSearchParams } from "next/navigation";
 import { api } from "~/trpc/react";
+import {
+  detectAll,
+  DETECTOR_VERSION,
+  type CamoufoxConfig,
+} from "~/lib/fingerprint-detector";
+import { generateProfileName } from "~/lib/profile-utils";
+import { toPythonDict, toJSON, getConfigStats } from "~/lib/config-formatter";
+
+type CaptureStatus = "idle" | "detecting" | "rendering" | "saving" | "done" | "error";
 
 // djb2 hash function
 function hashString(str: string): string {
@@ -17,7 +27,6 @@ function hashString(str: string): string {
 async function decompressPixels(
   compressed: string,
 ): Promise<Uint8ClampedArray> {
-  // Check if it's uncompressed (fallback)
   if (compressed.startsWith("raw:")) {
     const binary = atob(compressed.slice(4));
     const bytes = new Uint8ClampedArray(binary.length);
@@ -27,7 +36,6 @@ async function decompressPixels(
     return bytes;
   }
 
-  // Decompress gzip
   const binary = atob(compressed);
   const compressedBytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i++) {
@@ -43,434 +51,432 @@ async function decompressPixels(
   return new Uint8ClampedArray(arrayBuffer);
 }
 
-// Convert raw RGBA pixels (gzip compressed base64) to PNG dataURL
-async function rawPixelsToDataURL(
-  rawPixels: string,
-  width: number,
-  height: number,
-): Promise<string> {
-  try {
-    const bytes = await decompressPixels(rawPixels);
-    const canvas = document.createElement("canvas");
-    canvas.width = width;
-    canvas.height = height;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return "";
-    const imageData = ctx.createImageData(width, height);
-    imageData.data.set(bytes);
-    ctx.putImageData(imageData, 0, 0);
-    return canvas.toDataURL("image/png");
-  } catch (e) {
-    console.error("Failed to convert raw pixels:", e);
-    return "";
-  }
+interface CanvasFingerprint {
+  hash: string;
+  width: number;
+  height: number;
+  method: string;
+  dataURL: string;
 }
 
-export default function CanvasPage() {
-  const [copied, setCopied] = useState<string | null>(null);
-  const [deviceInfo, setDeviceInfo] = useState("");
-  const [rendering, setRendering] = useState<string | null>(null);
+function CapturePageContent() {
+  const searchParams = useSearchParams();
+  const profileNameParam = searchParams.get("profile");
+
+  const [status, setStatus] = useState<CaptureStatus>("idle");
+  const [hasValidCaptureCookie, setHasValidCaptureCookie] = useState(() => {
+    if (typeof document === 'undefined') return false;
+    const match = document.cookie.match(/camoufox_captured=v(\d+)/);
+    if (!match) return false;
+    // Cookie is valid only if version matches current detector version
+    return match[1] === String(DETECTOR_VERSION);
+  });
+  const [error, setError] = useState<string | null>(null);
+  const [fingerprintConfig, setFingerprintConfig] = useState<CamoufoxConfig | null>(null);
+  const [canvasFingerprints, setCanvasFingerprints] = useState<CanvasFingerprint[]>([]);
+  const [profileName, setProfileName] = useState<string>("");
+  const [savedProfileName, setSavedProfileName] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+  const [outputFormat, setOutputFormat] = useState<"python" | "json">("python");
+
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [previewCache, setPreviewCache] = useState<Record<string, string>>({});
 
-  const { data: fingerprints, isLoading, refetch } = api.canvas.list.useQuery();
+  const { data: existingCanvasFingerprints } = api.canvas.list.useQuery();
 
-  const uploadRender = api.canvas.uploadRender.useMutation({
-    onSuccess: () => refetch(),
+  const saveProfile = api.profile.save.useMutation({
+    onSuccess: (data) => {
+      setSavedProfileName(data.name);
+      setStatus("done");
+      // Set cookie with detector version to prevent re-capture on reload (expires in 24h)
+      document.cookie = `camoufox_captured=v${DETECTOR_VERSION}; path=/; max-age=86400`;
+      setHasValidCaptureCookie(true);
+    },
+    onError: (err) => {
+      setError(err.message);
+      setStatus("error");
+    },
   });
 
-  const deleteFingerprint = api.canvas.delete.useMutation({
-    onSuccess: () => refetch(),
-  });
-
-  const deleteAll = api.canvas.deleteAll.useMutation({
-    onSuccess: () => refetch(),
-  });
-
-  useEffect(() => {
-    setDeviceInfo(navigator.userAgent.slice(0, 50));
-  }, []);
-
-  // Generate preview URLs for all fingerprints (async)
-  useEffect(() => {
-    if (!fingerprints) return;
-
-    const generatePreviews = async () => {
-      const newCache: Record<string, string> = {};
-      for (const fp of fingerprints) {
-        if (!previewCache[fp.hash]) {
-          try {
-            newCache[fp.hash] = await rawPixelsToDataURL(
-              fp.pixelData,
-              fp.width,
-              fp.height,
-            );
-          } catch (e) {
-            console.error("Failed to generate preview for", fp.hash, e);
-          }
-        }
-      }
-      if (Object.keys(newCache).length > 0) {
-        setPreviewCache((prev) => ({ ...prev, ...newCache }));
-      }
-    };
-
-    generatePreviews();
-  }, [fingerprints]);
-
-  const getPreviewURL = (fp: {
-    hash: string;
-    pixelData: string;
-    width: number;
-    height: number;
-  }) => {
-    return previewCache[fp.hash] || "";
-  };
-
-  const renderAndSave = async (
-    fp: NonNullable<typeof fingerprints>[number],
-  ) => {
-    if (!deviceInfo.trim()) {
-      alert("Please enter device info first");
-      return;
+  // Render canvas fingerprints for this device
+  const renderCanvasFingerprints = useCallback(async (): Promise<CanvasFingerprint[]> => {
+    if (!existingCanvasFingerprints || existingCanvasFingerprints.length === 0) {
+      return [];
     }
 
-    setRendering(fp.hash);
+    const canvas = canvasRef.current;
+    if (!canvas) return [];
+
+    const results: CanvasFingerprint[] = [];
+
+    for (const fp of existingCanvasFingerprints) {
+      try {
+        canvas.width = fp.width;
+        canvas.height = fp.height;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) continue;
+
+        const bytes = await decompressPixels(fp.pixelData);
+        const imageData = ctx.createImageData(fp.width, fp.height);
+        imageData.data.set(bytes);
+        ctx.putImageData(imageData, 0, 0);
+
+        const renderedDataURL = canvas.toDataURL("image/png");
+
+        results.push({
+          hash: fp.hash,
+          width: fp.width,
+          height: fp.height,
+          method: fp.method,
+          dataURL: renderedDataURL,
+        });
+      } catch (e) {
+        console.error("Failed to render canvas:", fp.hash, e);
+      }
+    }
+
+    return results;
+  }, [existingCanvasFingerprints]);
+
+  // Main capture flow
+  const runCapture = useCallback(async () => {
+    setStatus("detecting");
+    setError(null);
+    setSavedProfileName(null);
+
     try {
-      const canvas = canvasRef.current;
-      if (!canvas) return;
+      // Step 1: Detect fingerprint
+      const detection = await detectAll({ skipGeolocation: true });
+      setFingerprintConfig(detection.config);
 
-      canvas.width = fp.width;
-      canvas.height = fp.height;
-      const ctx = canvas.getContext("2d");
-      if (!ctx) return;
-
-      // Decompress and convert raw pixels to ImageData
-      const bytes = await decompressPixels(fp.pixelData);
-      const imageData = ctx.createImageData(fp.width, fp.height);
-      imageData.data.set(bytes);
-      ctx.putImageData(imageData, 0, 0);
-
-      // Now get device-specific toDataURL output
-      const renderedDataURL = canvas.toDataURL("image/png");
-
-      await uploadRender.mutateAsync({
-        hash: fp.hash,
-        deviceInfo: deviceInfo.trim(),
-        dataURL: renderedDataURL,
-      });
-    } catch (error) {
-      console.error("Failed to render:", error);
-    } finally {
-      setRendering(null);
-    }
-  };
-
-  const renderAll = async () => {
-    if (!fingerprints) return;
-    for (const fp of fingerprints) {
-      await renderAndSave(fp);
-    }
-  };
-
-  const copyToClipboard = async (text: string, id: string) => {
-    await navigator.clipboard.writeText(text);
-    setCopied(id);
-    setTimeout(() => setCopied(null), 2000);
-  };
-
-  // Config maps: rawPixelHash -> spoofedToDataURL
-  // Key: fp.hash = hash of raw pixels (device-independent, computed by inject.js)
-  // Value: the stored render's toDataURL (what we want Camoufox to return)
-  const getConfigJson = () => {
-    if (!fingerprints) return "{}";
-    const config: Record<string, string> = {};
-    for (const fp of fingerprints) {
-      const render = fp.renders[0];
-      if (render) {
-        // Key: hash of raw pixels (device-independent)
-        // Value: the spoofed toDataURL output
-        config[fp.hash] = render.dataURL;
+      // Determine profile name
+      let name = profileNameParam || "";
+      if (!name) {
+        name = generateProfileName(detection.config);
       }
+      setProfileName(name);
+
+      // Step 2: Render canvas fingerprints
+      setStatus("rendering");
+      const canvasResults = await renderCanvasFingerprints();
+      setCanvasFingerprints(canvasResults);
+
+      // Step 3: Save profile
+      setStatus("saving");
+      await saveProfile.mutateAsync({
+        name,
+        fingerprintConfig: detection.config,
+        canvasFingerprints: canvasResults,
+      });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Unknown error");
+      setStatus("error");
     }
-    return JSON.stringify(config, null, 2);
+  }, [profileNameParam, renderCanvasFingerprints, saveProfile]);
+
+  // Auto-run capture on mount (skip if already captured with current detector version)
+  useEffect(() => {
+    if (status === "idle" && existingCanvasFingerprints !== undefined && !hasValidCaptureCookie) {
+      runCapture();
+    }
+  }, [existingCanvasFingerprints, hasValidCaptureCookie]);
+
+  // Handle manual re-capture (clears cookie to allow fresh capture)
+  const handleRecapture = useCallback(() => {
+    document.cookie = 'camoufox_captured=; path=/; max-age=0';
+    setHasValidCaptureCookie(false);
+    runCapture();
+  }, [runCapture]);
+
+  const getFormattedOutput = useCallback(() => {
+    if (!fingerprintConfig) return "";
+
+    // Add canvas fingerprints to config
+    const configWithCanvas = { ...fingerprintConfig };
+    if (canvasFingerprints.length > 0) {
+      const canvasConfig: Record<string, string> = {};
+      for (const cf of canvasFingerprints) {
+        canvasConfig[cf.hash] = cf.dataURL;
+      }
+      configWithCanvas["canvas:fingerprints"] = canvasConfig;
+    }
+
+    if (outputFormat === "python") {
+      return toPythonDict(configWithCanvas, { includeComments: true });
+    }
+    return toJSON(configWithCanvas, true);
+  }, [fingerprintConfig, canvasFingerprints, outputFormat]);
+
+  const copyToClipboard = async () => {
+    const output = getFormattedOutput();
+    try {
+      await navigator.clipboard.writeText(output);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      const textarea = document.createElement("textarea");
+      textarea.value = output;
+      document.body.appendChild(textarea);
+      textarea.select();
+      document.execCommand("copy");
+      document.body.removeChild(textarea);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
   };
 
-  // Count fingerprints that have renders
-  const renderedCount = useMemo(() => {
-    if (!fingerprints) return 0;
-    return fingerprints.filter((fp) => fp.renders.length > 0).length;
-  }, [fingerprints]);
+  const stats = fingerprintConfig ? getConfigStats(fingerprintConfig) : null;
 
   return (
-    <div className="min-h-screen overflow-y-auto bg-gray-50">
+    <div className="min-h-screen bg-gray-900 text-gray-100 p-6">
       <canvas ref={canvasRef} className="hidden" />
 
-      <header className="sticky top-0 z-10 border-b bg-white">
-        <div className="mx-auto max-w-4xl px-4 py-3">
-          <div className="flex items-center justify-between">
-            <div>
-              <h1 className="text-lg font-bold text-gray-900">
-                Canvas Fingerprints
-              </h1>
-              <p className="text-xs text-gray-500">
-                {fingerprints?.length ?? 0} fingerprints, {renderedCount}{" "}
-                rendered
-              </p>
-            </div>
-            <div className="flex gap-2">
+      <div className="max-w-6xl mx-auto">
+        <h1 className="text-3xl font-bold mb-2">Capture Fingerprint</h1>
+        <p className="text-gray-400 mb-6">
+          Auto-detect and save browser fingerprint profile
+        </p>
+
+        {/* Status Banner */}
+        <div className="bg-gray-800 rounded-lg p-4 mb-6">
+          <div className="flex items-center gap-4">
+            {status === "idle" && !hasValidCaptureCookie && (
+              <span className="text-gray-400">Waiting for canvas data...</span>
+            )}
+            {status === "idle" && hasValidCaptureCookie && (
+              <span className="text-yellow-400">Already captured (v{DETECTOR_VERSION}). Click Re-capture to run again.</span>
+            )}
+            {status === "detecting" && (
+              <span className="flex items-center gap-2">
+                <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24" fill="none">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                </svg>
+                Detecting fingerprint...
+              </span>
+            )}
+            {status === "rendering" && (
+              <span className="flex items-center gap-2">
+                <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24" fill="none">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                </svg>
+                Rendering canvas fingerprints...
+              </span>
+            )}
+            {status === "saving" && (
+              <span className="flex items-center gap-2">
+                <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24" fill="none">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                </svg>
+                Saving profile...
+              </span>
+            )}
+            {status === "done" && savedProfileName && (
+              <span className="text-green-400">
+                Profile saved as &quot;{savedProfileName}&quot;
+              </span>
+            )}
+            {status === "error" && (
+              <span className="text-red-400">Error: {error}</span>
+            )}
+
+            <div className="ml-auto flex items-center gap-4">
+              <span className="text-xs text-gray-500">
+                Detector v{DETECTOR_VERSION}
+              </span>
               <button
-                onClick={() => refetch()}
-                className="rounded-lg bg-gray-200 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-300"
+                onClick={handleRecapture}
+                disabled={status === "detecting" || status === "rendering" || status === "saving"}
+                className="px-4 py-2 rounded-lg font-medium bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 disabled:cursor-not-allowed"
               >
-                Refresh
-              </button>
-              <button
-                onClick={renderAll}
-                disabled={
-                  !fingerprints?.length ||
-                  rendering !== null ||
-                  !deviceInfo.trim()
-                }
-                className="rounded-lg bg-blue-600 px-3 py-1.5 text-sm text-white hover:bg-blue-700 disabled:opacity-50"
-              >
-                Render All
-              </button>
-              <button
-                onClick={() => {
-                  if (
-                    confirm("Delete ALL fingerprints? This cannot be undone.")
-                  ) {
-                    deleteAll.mutate();
-                  }
-                }}
-                disabled={!fingerprints?.length || deleteAll.isPending}
-                className="rounded-lg bg-red-600 px-3 py-1.5 text-sm text-white hover:bg-red-700 disabled:opacity-50"
-              >
-                Delete All
+                Re-capture
               </button>
             </div>
           </div>
 
-          <div className="mt-3">
-            <label className="mb-1 block text-xs font-medium text-gray-700">
-              Device Info
-            </label>
-            <input
-              type="text"
-              value={deviceInfo}
-              onChange={(e) => setDeviceInfo(e.target.value)}
-              placeholder="e.g., iPhone 15 Pro, Pixel 8, etc."
-              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none"
-            />
-          </div>
-        </div>
-      </header>
-
-      <main className="mx-auto max-w-4xl px-4 py-4">
-        {isLoading ? (
-          <div className="flex items-center justify-center py-12">
-            <div className="h-8 w-8 animate-spin rounded-full border-4 border-blue-600 border-t-transparent" />
-          </div>
-        ) : !fingerprints?.length ? (
-          <div className="py-12 text-center">
-            <div className="mb-4 text-6xl">🎨</div>
-            <h2 className="mb-2 text-xl font-semibold text-gray-900">
-              No fingerprints yet
-            </h2>
-            <p className="text-gray-500">
-              Upload canvas fingerprints from the browser extension
+          {profileNameParam && (
+            <p className="text-sm text-gray-500 mt-2">
+              Profile name from URL: <code className="bg-gray-700 px-1 rounded">{profileNameParam}</code>
             </p>
+          )}
+        </div>
+
+        {/* Error */}
+        {error && (
+          <div className="bg-red-900/50 border border-red-700 rounded-lg p-4 mb-6">
+            <p className="text-red-300">{error}</p>
           </div>
-        ) : (
-          <div className="space-y-4">
-            {fingerprints.map((fp) => (
-              <div
-                key={fp.id}
-                className="overflow-hidden rounded-xl border bg-white shadow-sm"
-              >
-                <div className="border-b bg-gray-50 px-4 py-3">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <code className="rounded bg-gray-200 px-2 py-0.5 font-mono text-sm">
-                        {fp.hash}
-                      </code>
-                      <span className="text-xs text-gray-400">
-                        {fp.width}x{fp.height}
-                      </span>
-                      <span className="rounded bg-blue-100 px-1.5 py-0.5 text-xs text-blue-700">
-                        {fp.method}
-                      </span>
-                      {fp.renders.length === 0 && (
-                        <span className="rounded bg-yellow-100 px-1.5 py-0.5 text-xs text-yellow-700">
-                          needs render
-                        </span>
-                      )}
-                    </div>
-                    <div className="flex gap-1">
-                      <button
-                        onClick={() => renderAndSave(fp)}
-                        disabled={rendering === fp.hash || !deviceInfo.trim()}
-                        className="rounded bg-blue-100 px-2 py-1 text-xs text-blue-700 hover:bg-blue-200 disabled:opacity-50"
-                      >
-                        {rendering === fp.hash ? "..." : "Render"}
-                      </button>
-                      <button
-                        onClick={() => {
-                          if (confirm(`Delete fingerprint ${fp.hash}?`)) {
-                            deleteFingerprint.mutate({ hash: fp.hash });
-                          }
-                        }}
-                        disabled={deleteFingerprint.isPending}
-                        className="rounded bg-red-100 px-2 py-1 text-xs text-red-700 hover:bg-red-200 disabled:opacity-50"
-                      >
-                        Delete
-                      </button>
-                    </div>
-                  </div>
-                  <p className="mt-1 truncate text-xs text-gray-400">
-                    {fp.sourceUrl}
-                  </p>
+        )}
+
+        {/* Results */}
+        {fingerprintConfig && (
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            {/* Stats Panel */}
+            <div className="lg:col-span-1 space-y-4">
+              <div className="bg-gray-800 rounded-lg p-4">
+                <h2 className="text-lg font-semibold mb-3">Statistics</h2>
+                <div className="text-3xl font-bold text-blue-400 mb-2">
+                  {stats?.totalProperties}
+                </div>
+                <div className="text-sm text-gray-400 mb-4">
+                  properties detected
                 </div>
 
-                <div className="p-4">
-                  <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
-                    <div>
-                      <p className="mb-1 text-xs font-medium text-gray-500">
-                        Config Key{" "}
-                        <code className="rounded bg-gray-200 px-1 text-gray-600">
-                          {fp.hash}
-                        </code>
-                      </p>
-                      <div className="rounded-lg border bg-gray-50 p-2">
-                        {getPreviewURL(fp) ? (
-                          <img
-                            src={getPreviewURL(fp)}
-                            alt="Original"
-                            className="h-auto w-full"
-                            style={{ imageRendering: "pixelated" }}
-                          />
-                        ) : (
-                          <div className="flex h-20 items-center justify-center text-xs text-gray-400">
-                            Loading...
-                          </div>
-                        )}
-                      </div>
+                <div className="space-y-2">
+                  {stats?.categories.map((cat) => (
+                    <div key={cat.name} className="flex justify-between text-sm">
+                      <span className="text-gray-400">{cat.name}</span>
+                      <span className="text-gray-200">{cat.count}</span>
                     </div>
+                  ))}
+                </div>
+              </div>
 
-                    <div>
-                      <p className="mb-1 text-xs font-medium text-green-600">
-                        This Device toDataURL{" "}
-                        {getPreviewURL(fp) && (
-                          <code className="text-green-400">
-                            #{hashString(getPreviewURL(fp))}
-                          </code>
-                        )}
-                      </p>
-                      <div className="rounded-lg border border-green-200 bg-green-50 p-2">
-                        {getPreviewURL(fp) ? (
-                          <img
-                            src={getPreviewURL(fp)}
-                            alt="This device"
-                            className="h-auto w-full"
-                            style={{ imageRendering: "pixelated" }}
-                          />
-                        ) : (
-                          <div className="flex h-20 items-center justify-center text-xs text-gray-400">
-                            Rendering...
-                          </div>
-                        )}
-                      </div>
-                    </div>
+              {/* Canvas Fingerprints */}
+              <div className="bg-gray-800 rounded-lg p-4">
+                <h2 className="text-lg font-semibold mb-3">
+                  Canvas Fingerprints
+                </h2>
+                <div className="text-3xl font-bold text-purple-400 mb-2">
+                  {canvasFingerprints.length}
+                </div>
+                <div className="text-sm text-gray-400 mb-4">
+                  rendered for this device
+                </div>
 
-                    {fp.renders.map((render, i) => (
-                      <div key={render.id}>
-                        <p
-                          className="mb-1 flex items-center gap-1 text-xs font-medium text-purple-600"
-                          title={render.deviceInfo}
-                        >
-                          <div className="max-w-40 truncate">
-                            {render.deviceInfo}{" "}
-                          </div>
-                          <code className="text-purple-400">
-                            #{hashString(render.dataURL)}
-                          </code>
-                        </p>
-                        <div className="rounded-lg border border-purple-200 bg-purple-50 p-2">
-                          <img
-                            src={render.dataURL}
-                            alt={`Render ${i + 1}`}
-                            className="h-auto w-full"
-                            style={{ imageRendering: "pixelated" }}
-                          />
-                        </div>
+                {canvasFingerprints.length > 0 && (
+                  <div className="space-y-2 max-h-48 overflow-y-auto">
+                    {canvasFingerprints.map((cf) => (
+                      <div
+                        key={cf.hash}
+                        className="text-xs bg-gray-900 rounded p-2"
+                      >
+                        <code className="text-purple-300">{cf.hash}</code>
+                        <span className="text-gray-500 ml-2">
+                          {cf.width}x{cf.height}
+                        </span>
                       </div>
                     ))}
                   </div>
-                </div>
+                )}
 
-                {fp.renders.length > 0 && (
-                  <div className="border-t bg-gray-50 px-4 py-3">
-                    <div className="flex items-center justify-between">
-                      <code className="mr-2 flex-1 truncate text-xs text-gray-600">
-                        &quot;{fp.hash}&quot;:
-                        &quot;data:image/png;base64,...&quot;
-                      </code>
-                      <button
-                        onClick={() =>
-                          copyToClipboard(
-                            `"${fp.hash}": "${fp.renders[0]!.dataURL}"`,
-                            fp.hash,
-                          )
-                        }
-                        className={`rounded px-2 py-1 text-xs transition-colors ${
-                          copied === fp.hash
-                            ? "bg-green-100 text-green-700"
-                            : "bg-gray-200 text-gray-700 hover:bg-gray-300"
-                        }`}
-                      >
-                        {copied === fp.hash ? "Copied!" : "Copy"}
-                      </button>
-                    </div>
-                  </div>
+                {canvasFingerprints.length === 0 && existingCanvasFingerprints?.length === 0 && (
+                  <p className="text-xs text-gray-500">
+                    No canvas fingerprints collected yet. Use the browser extension to capture them.
+                  </p>
                 )}
               </div>
-            ))}
 
-            <div className="overflow-hidden rounded-xl border bg-white shadow-sm">
-              <div className="border-b bg-gray-50 px-4 py-3">
-                <h2 className="font-semibold text-gray-900">Full Config</h2>
-                <p className="text-xs text-gray-500">
-                  Copy this to your Camoufox canvas:fingerprints config
-                  {renderedCount < (fingerprints?.length ?? 0) && (
-                    <span className="ml-2 text-yellow-600">
-                      ({(fingerprints?.length ?? 0) - renderedCount} not
-                      rendered yet)
-                    </span>
-                  )}
-                </p>
+              {/* Profile Info */}
+              <div className="bg-gray-800 rounded-lg p-4">
+                <h2 className="text-lg font-semibold mb-3">Profile</h2>
+                <dl className="space-y-2 text-sm">
+                  <div>
+                    <dt className="text-gray-500">Name</dt>
+                    <dd className="text-gray-200 font-mono">{profileName}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-gray-500">Detector Version</dt>
+                    <dd className="text-gray-200">{DETECTOR_VERSION}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-gray-500">Status</dt>
+                    <dd>
+                      {savedProfileName ? (
+                        <span className="text-green-400">Saved</span>
+                      ) : (
+                        <span className="text-yellow-400">Not saved</span>
+                      )}
+                    </dd>
+                  </div>
+                </dl>
               </div>
-              <div className="p-4">
-                <pre className="max-h-64 overflow-x-auto rounded-lg bg-gray-900 p-4 text-xs text-green-400">
-                  {getConfigJson()}
+            </div>
+
+            {/* Output Panel */}
+            <div className="lg:col-span-2">
+              <div className="bg-gray-800 rounded-lg p-4">
+                <div className="flex justify-between items-center mb-3">
+                  <h2 className="text-lg font-semibold">
+                    {outputFormat === "python" ? "Python Config" : "JSON Config"}
+                  </h2>
+                  <div className="flex items-center gap-2">
+                    <select
+                      value={outputFormat}
+                      onChange={(e) => setOutputFormat(e.target.value as "python" | "json")}
+                      className="bg-gray-700 rounded px-2 py-1 text-sm"
+                    >
+                      <option value="python">Python dict</option>
+                      <option value="json">JSON</option>
+                    </select>
+                    <button
+                      onClick={copyToClipboard}
+                      className={`px-4 py-2 rounded-lg font-medium transition-colors ${
+                        copied
+                          ? "bg-green-600"
+                          : "bg-gray-700 hover:bg-gray-600"
+                      }`}
+                    >
+                      {copied ? "Copied!" : "Copy"}
+                    </button>
+                  </div>
+                </div>
+
+                <pre className="bg-gray-900 rounded-lg p-4 overflow-auto max-h-[600px] text-sm font-mono">
+                  <code className="text-gray-300">{getFormattedOutput()}</code>
                 </pre>
-                <button
-                  onClick={() =>
-                    copyToClipboard(getConfigJson(), "full-config")
-                  }
-                  className={`mt-3 w-full rounded-lg py-2 text-sm font-medium transition-colors ${
-                    copied === "full-config"
-                      ? "bg-green-100 text-green-700"
-                      : "bg-blue-600 text-white hover:bg-blue-700"
-                  }`}
-                >
-                  {copied === "full-config" ? "Copied!" : "Copy Full Config"}
-                </button>
               </div>
             </div>
           </div>
         )}
-      </main>
+
+        {/* Loading State */}
+        {status === "idle" && !fingerprintConfig && !hasValidCaptureCookie && (
+          <div className="bg-gray-800 rounded-lg p-12 text-center">
+            <div className="text-6xl mb-4">...</div>
+            <h2 className="text-xl font-semibold mb-2">Loading</h2>
+            <p className="text-gray-400">
+              Waiting for canvas fingerprint data before auto-detection...
+            </p>
+          </div>
+        )}
+        {status === "idle" && !fingerprintConfig && hasValidCaptureCookie && (
+          <div className="bg-gray-800 rounded-lg p-12 text-center">
+            <div className="text-6xl mb-4">&#x2714;</div>
+            <h2 className="text-xl font-semibold mb-2">Already Captured</h2>
+            <p className="text-gray-400">
+              A profile was captured with detector v{DETECTOR_VERSION}. Click &quot;Re-capture&quot; to run again.
+            </p>
+          </div>
+        )}
+      </div>
     </div>
+  );
+}
+
+function CapturePageFallback() {
+  return (
+    <div className="min-h-screen bg-gray-900 text-gray-100 p-6">
+      <div className="max-w-6xl mx-auto">
+        <h1 className="text-3xl font-bold mb-2">Capture Fingerprint</h1>
+        <p className="text-gray-400 mb-6">
+          Auto-detect and save browser fingerprint profile
+        </p>
+        <div className="bg-gray-800 rounded-lg p-12 text-center">
+          <div className="text-6xl mb-4">...</div>
+          <h2 className="text-xl font-semibold mb-2">Loading</h2>
+          <p className="text-gray-400">Initializing...</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export default function CapturePage() {
+  return (
+    <Suspense fallback={<CapturePageFallback />}>
+      <CapturePageContent />
+    </Suspense>
   );
 }

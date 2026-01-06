@@ -38,3 +38,36 @@ model CanvasRender {
 
   @@map("canvas_render")
 }
+
+model Profile {
+  id                String   @id @default(cuid())
+  name              String   @unique // "Firefox-1920x1080-a3f2" or custom
+  browser           String
+  screenWidth       Int
+  screenHeight      Int
+  hashSuffix        String // 4-char hash from fingerprint config
+  fingerprintConfig Json   // Native JSON for 100+ fingerprint properties
+  userAgent         String
+  detectorVersion   Int    // Version of fingerprint-detector.ts used
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  canvasFingerprints ProfileCanvasFingerprint[]
+}
+
+model ProfileCanvasFingerprint {
+  id        String  @id @default(cuid())
+  profileId String
+  profile   Profile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  hash    String // e.g., "240x60_1cfc1c01ffff0700"
+  width   Int
+  height  Int
+  method  String
+  dataURL String // Base64 PNG for Camoufox spoofing
+
+  createdAt DateTime @default(now())
+
+  @@index([profileId])
+}

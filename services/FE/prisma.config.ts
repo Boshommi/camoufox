@@ -1,5 +1,5 @@
 import { defineConfig } from "prisma/config";
-import { env } from "./src/env";
+import { listLocalDatabases } from "@prisma/adapter-d1";
 
 export default defineConfig({
   schema: "./prisma/schema.prisma",
@@ -7,6 +7,6 @@ export default defineConfig({
     path: "./prisma/migrations",
   },
   datasource: {
-    url: env.DATABASE_URL,
+    url: `file:${listLocalDatabases()[0]!}`,
   },
 });
