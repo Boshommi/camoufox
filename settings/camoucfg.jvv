@@ -38,6 +38,9 @@
     "navigator.globalPrivacyControl": "bool",
     "navigator.onLine": "bool",
     "navigator.plugins": "array[@PLUGIN_TYPE]",
+    "navigator.vendor": "str",
+    "navigator.vendorSub": "str",
+    "navigator.webdriver": "bool",
     "window.history.length": "int[>=0]",
     "pdfViewerEnabled": "bool",
     
@@ -57,7 +60,10 @@
     "window.screenX": "int",
     "window.screenY": "int",
     "window.devicePixelRatio": "double[>0]",
-    
+    "window.InstallTrigger:hide": "bool",
+    "window.chrome": "bool",
+    "window.webkit": "bool",
+
     "document.body.clientWidth$__DOC_BODY": "int[>=0]",
     "document.body.clientHeight$__DOC_BODY": "int[>=0]",
     "document.body.clientTop": "int",
@@ -362,5 +368,10 @@
 
     "@MEDIA_CODEC_OVERRIDES": {
         "/^.+$/": "str"
-    }
+    },
+
+    "performance.memory": "bool",
+    "performance.memory:jsHeapSizeLimit": "int[>0]",
+    "performance.memory:totalJSHeapSize": "int[>0]",
+    "performance.memory:usedJSHeapSize": "int[>0]"
 }

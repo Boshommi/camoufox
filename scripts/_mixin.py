@@ -75,7 +75,7 @@ def list_files(root_dir, suffix):
 
 def list_patches(root_dir='../patches', suffix='*.patch'):
     """List all patch files"""
-    return sorted(list_files(root_dir, suffix), key=os.path.basename)
+    return sorted(list_files(root_dir, suffix))
 
 def is_bootstrap_patch(name):
     return bool(re.match(r'\d+\-.*', os.path.basename(name)))

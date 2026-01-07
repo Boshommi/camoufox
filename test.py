@@ -20,6 +20,14 @@ config = {
     "navigator.maxTouchPoints": 5,
     "navigator.cookieEnabled": True,
     "navigator.onLine": True,
+    "navigator.vendor": "Apple Computer, Inc.",
+    "navigator.vendorSub": "",
+    "navigator.webdriver": False,
+    # Browser Detection - Safari specific
+    "navigator.userAgentData": False,  # CRITICAL: Safari doesn't have this Chrome-only API
+    "window.InstallTrigger:hide": True,  # Hide Firefox-specific API
+    "window.webkit": True,  # Safari has window.webkit
+    # Note: window.chrome and performance.memory are NOT set (Safari doesn't have them)
     "navigator.plugins": [
         {
             "name": "PDF Viewer",
@@ -107,6 +115,7 @@ config = {
             ],
         },
     ],
+    # "navigator.plugins": [],
     # Screen
     "screen.availHeight": 956,
     "screen.availWidth": 440,

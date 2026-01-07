@@ -17,6 +17,9 @@
     { "property": "navigator.buildID", "type": "str" },
     { "property": "navigator.onLine", "type": "bool" },
     { "property": "navigator.plugins", "type": "array" },
+    { "property": "navigator.vendor", "type": "str" },
+    { "property": "navigator.vendorSub", "type": "str" },
+    { "property": "navigator.webdriver", "type": "bool" },
     { "property": "screen.availHeight", "type": "uint" },
     { "property": "screen.availWidth", "type": "uint" },
     { "property": "screen.availTop", "type": "uint" },
@@ -39,6 +42,9 @@
     { "property": "window.screenY", "type": "int" },
     { "property": "window.history.length", "type": "uint" },
     { "property": "window.devicePixelRatio", "type": "double" },
+    { "property": "window.InstallTrigger:hide", "type": "bool" },
+    { "property": "window.chrome", "type": "bool" },
+    { "property": "window.webkit", "type": "bool" },
     { "property": "document.body.clientWidth", "type": "uint" },
     { "property": "document.body.clientHeight", "type": "uint" },
     { "property": "document.body.clientTop", "type": "uint" },
@@ -138,5 +144,9 @@
     { "property": "mediaQuery:any-hover", "type": "str" },
     { "property": "mediaQuery:monochrome", "type": "bool" },
     { "property": "mediaQuery:color", "type": "bool" },
-    { "property": "mediaCodec:overrides", "type": "dict" }
+    { "property": "mediaCodec:overrides", "type": "dict" },
+    { "property": "performance.memory", "type": "bool" },
+    { "property": "performance.memory:jsHeapSizeLimit", "type": "uint" },
+    { "property": "performance.memory:totalJSHeapSize", "type": "uint" },
+    { "property": "performance.memory:usedJSHeapSize", "type": "uint" }
 ]

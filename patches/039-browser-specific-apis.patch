@@ -1,0 +1,844 @@
+diff --git a/dom/base/Navigator.cpp b/dom/base/Navigator.cpp
+index 7624d760fc..1322021be8 100644
+--- a/dom/base/Navigator.cpp
++++ b/dom/base/Navigator.cpp
+@@ -518,9 +518,21 @@ void Navigator::GetOscpu(nsAString& aOSCPU, CallerType aCallerType,
+   CopyASCIItoUTF16(oscpu, aOSCPU);
+ }
+
+-void Navigator::GetVendor(nsAString& aVendor) { aVendor.Truncate(); }
++void Navigator::GetVendor(nsAString& aVendor) {
++  if (auto value = MaskConfig::GetString("navigator.vendor")) {
++    aVendor.Assign(NS_ConvertUTF8toUTF16(value.value()));
++    return;
++  }
++  aVendor.Truncate();
++}
+
+-void Navigator::GetVendorSub(nsAString& aVendorSub) { aVendorSub.Truncate(); }
++void Navigator::GetVendorSub(nsAString& aVendorSub) {
++  if (auto value = MaskConfig::GetString("navigator.vendorSub")) {
++    aVendorSub.Assign(NS_ConvertUTF8toUTF16(value.value()));
++    return;
++  }
++  aVendorSub.Truncate();
++}
+
+ void Navigator::GetProduct(nsAString& aProduct) {
+   if (auto value = MaskConfig::GetString("navigator.product")) {
+@@ -2383,14 +2395,18 @@ NavigatorLogin* Navigator::Login() {
+   return mLogin;
+ }
+
+-NavigatorUAData* Navigator::UserAgentData() {
+-  // Check if userAgentData is disabled
++// Camoufox: Control userAgentData visibility via Func attribute
++/* static */
++bool Navigator::ShouldExposeUserAgentData(JSContext* aCx, JSObject* aObj) {
++  // Check if explicitly disabled (for Safari spoofing)
+   if (auto enabled = MaskConfig::GetBool("navigator.userAgentData")) {
+-    if (!*enabled) {
+-      return nullptr;
+-    }
++    return *enabled;
+   }
++  return true;  // Default: enabled (Chrome compatibility)
++}
+
++NavigatorUAData* Navigator::UserAgentData() {
++  // Visibility is controlled by Func attribute (ShouldExposeUserAgentData)
+   if (!mUserAgentData) {
+     nsCOMPtr<nsIGlobalObject> global = do_QueryInterface(mWindow);
+     if (global) {
+@@ -2409,6 +2425,11 @@ dom::PrivateAttribution* Navigator::PrivateAttribution() {
+
+ /* static */
+ bool Navigator::Webdriver() {
++  // Camoufox: Allow overriding webdriver detection
++  if (auto value = MaskConfig::GetBool("navigator.webdriver"); value.has_value()) {
++    return value.value();
++  }
++
+ #ifdef ENABLE_WEBDRIVER
+   nsCOMPtr<nsIMarionette> marionette = do_GetService(NS_MARIONETTE_CONTRACTID);
+   if (marionette) {
+diff --git a/dom/base/Navigator.h b/dom/base/Navigator.h
+index c7ef6981f7..1a8b721cde 100644
+--- a/dom/base/Navigator.h
++++ b/dom/base/Navigator.h
+@@ -238,6 +238,9 @@ class Navigator final : public nsISupports, public nsWrapperCache {
+
+   static bool HasMidiSupport(JSContext* /* unused */, JSObject* /* unused */);
+
++  // Camoufox: Control userAgentData visibility
++  static bool ShouldExposeUserAgentData(JSContext*, JSObject*);
++
+   nsPIDOMWindowInner* GetParentObject() const { return GetWindow(); }
+
+   virtual JSObject* WrapObject(JSContext* cx,
+diff --git a/dom/base/WindowChrome.cpp b/dom/base/WindowChrome.cpp
+new file mode 100644
+index 0000000000..ed61e26c0a
+--- /dev/null
++++ b/dom/base/WindowChrome.cpp
+@@ -0,0 +1,41 @@
++/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
++/* vim: set ts=8 sts=2 et sw=2 tw=80: */
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
++
++// Camoufox: Chrome browser window.chrome API compatibility stub
++
++#include "mozilla/dom/WindowChrome.h"
++#include "mozilla/dom/WindowChromeBinding.h"
++#include "nsIGlobalObject.h"
++
++namespace mozilla::dom {
++
++NS_IMPL_CYCLE_COLLECTION_WRAPPERCACHE(WindowChrome, mGlobal)
++
++NS_IMPL_CYCLE_COLLECTING_ADDREF(WindowChrome)
++NS_IMPL_CYCLE_COLLECTING_RELEASE(WindowChrome)
++
++NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(WindowChrome)
++  NS_WRAPPERCACHE_INTERFACE_MAP_ENTRY
++  NS_INTERFACE_MAP_ENTRY(nsISupports)
++NS_INTERFACE_MAP_END
++
++WindowChrome::WindowChrome(nsIGlobalObject* aGlobal) : mGlobal(aGlobal) {}
++
++WindowChrome::~WindowChrome() = default;
++
++JSObject* WindowChrome::WrapObject(JSContext* aCx,
++                                   JS::Handle<JSObject*> aGivenProto) {
++  return WindowChrome_Binding::Wrap(aCx, this, aGivenProto);
++}
++
++void WindowChrome::GetRuntime(JSContext* aCx,
++                              JS::MutableHandle<JSObject*> aRetval) {
++  // Create an empty object for basic "window.chrome.runtime" detection
++  JS::Rooted<JSObject*> obj(aCx, JS_NewPlainObject(aCx));
++  aRetval.set(obj);
++}
++
++}  // namespace mozilla::dom
+diff --git a/dom/base/WindowChrome.h b/dom/base/WindowChrome.h
+new file mode 100644
+index 0000000000..c32f664eac
+--- /dev/null
++++ b/dom/base/WindowChrome.h
+@@ -0,0 +1,43 @@
++/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
++/* vim: set ts=8 sts=2 et sw=2 tw=80: */
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
++
++// Camoufox: Chrome browser window.chrome API compatibility stub
++
++#ifndef mozilla_dom_WindowChrome_h
++#define mozilla_dom_WindowChrome_h
++
++#include "nsISupports.h"
++#include "nsWrapperCache.h"
++#include "nsCycleCollectionParticipant.h"
++
++class nsIGlobalObject;
++
++namespace mozilla::dom {
++
++class WindowChrome final : public nsISupports, public nsWrapperCache {
++ public:
++  NS_DECL_CYCLE_COLLECTING_ISUPPORTS
++  NS_DECL_CYCLE_COLLECTION_WRAPPERCACHE_CLASS(WindowChrome)
++
++  explicit WindowChrome(nsIGlobalObject* aGlobal);
++
++  nsIGlobalObject* GetParentObject() const { return mGlobal; }
++
++  JSObject* WrapObject(JSContext* aCx,
++                       JS::Handle<JSObject*> aGivenProto) override;
++
++  // WebIDL: readonly attribute object? runtime
++  void GetRuntime(JSContext* aCx, JS::MutableHandle<JSObject*> aRetval);
++
++ private:
++  ~WindowChrome();
++
++  nsCOMPtr<nsIGlobalObject> mGlobal;
++};
++
++}  // namespace mozilla::dom
++
++#endif  // mozilla_dom_WindowChrome_h
+diff --git a/dom/base/WindowWebkit.cpp b/dom/base/WindowWebkit.cpp
+new file mode 100644
+index 0000000000..4cd8a24109
+--- /dev/null
++++ b/dom/base/WindowWebkit.cpp
+@@ -0,0 +1,41 @@
++/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
++/* vim: set ts=8 sts=2 et sw=2 tw=80: */
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
++
++// Camoufox: Safari browser window.webkit API compatibility stub
++
++#include "mozilla/dom/WindowWebkit.h"
++#include "mozilla/dom/WindowWebkitBinding.h"
++#include "nsIGlobalObject.h"
++
++namespace mozilla::dom {
++
++NS_IMPL_CYCLE_COLLECTION_WRAPPERCACHE(WindowWebkit, mGlobal)
++
++NS_IMPL_CYCLE_COLLECTING_ADDREF(WindowWebkit)
++NS_IMPL_CYCLE_COLLECTING_RELEASE(WindowWebkit)
++
++NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(WindowWebkit)
++  NS_WRAPPERCACHE_INTERFACE_MAP_ENTRY
++  NS_INTERFACE_MAP_ENTRY(nsISupports)
++NS_INTERFACE_MAP_END
++
++WindowWebkit::WindowWebkit(nsIGlobalObject* aGlobal) : mGlobal(aGlobal) {}
++
++WindowWebkit::~WindowWebkit() = default;
++
++JSObject* WindowWebkit::WrapObject(JSContext* aCx,
++                                   JS::Handle<JSObject*> aGivenProto) {
++  return WindowWebkit_Binding::Wrap(aCx, this, aGivenProto);
++}
++
++void WindowWebkit::GetMessageHandlers(JSContext* aCx,
++                                      JS::MutableHandle<JSObject*> aRetval) {
++  // Create an empty object for basic "window.webkit.messageHandlers" detection
++  JS::Rooted<JSObject*> obj(aCx, JS_NewPlainObject(aCx));
++  aRetval.set(obj);
++}
++
++}  // namespace mozilla::dom
+diff --git a/dom/base/WindowWebkit.h b/dom/base/WindowWebkit.h
+new file mode 100644
+index 0000000000..0fb2eacfc0
+--- /dev/null
++++ b/dom/base/WindowWebkit.h
+@@ -0,0 +1,43 @@
++/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
++/* vim: set ts=8 sts=2 et sw=2 tw=80: */
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
++
++// Camoufox: Safari browser window.webkit API compatibility stub
++
++#ifndef mozilla_dom_WindowWebkit_h
++#define mozilla_dom_WindowWebkit_h
++
++#include "nsISupports.h"
++#include "nsWrapperCache.h"
++#include "nsCycleCollectionParticipant.h"
++
++class nsIGlobalObject;
++
++namespace mozilla::dom {
++
++class WindowWebkit final : public nsISupports, public nsWrapperCache {
++ public:
++  NS_DECL_CYCLE_COLLECTING_ISUPPORTS
++  NS_DECL_CYCLE_COLLECTION_WRAPPERCACHE_CLASS(WindowWebkit)
++
++  explicit WindowWebkit(nsIGlobalObject* aGlobal);
++
++  nsIGlobalObject* GetParentObject() const { return mGlobal; }
++
++  JSObject* WrapObject(JSContext* aCx,
++                       JS::Handle<JSObject*> aGivenProto) override;
++
++  // WebIDL: readonly attribute object? messageHandlers
++  void GetMessageHandlers(JSContext* aCx, JS::MutableHandle<JSObject*> aRetval);
++
++ private:
++  ~WindowWebkit();
++
++  nsCOMPtr<nsIGlobalObject> mGlobal;
++};
++
++}  // namespace mozilla::dom
++
++#endif  // mozilla_dom_WindowWebkit_h
+diff --git a/dom/base/moz.build b/dom/base/moz.build
+index da04d294e9..9f5c7c659a 100644
+--- a/dom/base/moz.build
++++ b/dom/base/moz.build
+@@ -292,8 +292,10 @@ EXPORTS.mozilla.dom += [
+     "VideoFrameProvider.h",
+     "ViewportMetaData.h",
+     "VisualViewport.h",
++    "WindowChrome.h",
+     "WindowFeatures.h",
+     "WindowProxyHolder.h",
++    "WindowWebkit.h",
+ ]
+
+ if CONFIG["FUZZING"]:
+@@ -498,9 +500,11 @@ UNIFIED_SOURCES += [
+     "UserActivation.cpp",
+     "ViewportMetaData.cpp",
+     "VisualViewport.cpp",
++    "WindowChrome.cpp",
+     "WindowDestroyedEvent.cpp",
+     "WindowFeatures.cpp",
+     "WindowNamedPropertiesHandler.cpp",
++    "WindowWebkit.cpp",
+     "XPathGenerator.cpp",
+ ]
+
+diff --git a/dom/base/nsGlobalWindowInner.cpp b/dom/base/nsGlobalWindowInner.cpp
+index c59f79f4cf..4d937cd169 100644
+--- a/dom/base/nsGlobalWindowInner.cpp
++++ b/dom/base/nsGlobalWindowInner.cpp
+@@ -6,6 +6,8 @@
+
+ #include "nsGlobalWindowInner.h"
+ #include "MaskConfig.hpp"
++#include "WindowChrome.h"
++#include "WindowWebkit.h"
+
+ #include <inttypes.h>
+ #include <stdio.h>
+@@ -1183,6 +1185,8 @@ void nsGlobalWindowInner::FreeInnerObjects() {
+   }
+
+   mScreen = nullptr;
++  mChrome = nullptr;  // Camoufox
++  mWebkit = nullptr;  // Camoufox
+
+   if (mDoc) {
+     // Remember the document's principal, URI, and policyContainer.
+@@ -2564,6 +2568,18 @@ bool nsGlobalWindowInner::ShouldReportForServiceWorkerScope(
+   return result;
+ }
+
++// Camoufox: Static method to control InstallTrigger visibility
++/* static */
++bool nsGlobalWindowInner::ShouldExposeInstallTrigger(JSContext* aCx,
++                                                     JSObject* aObj) {
++  // If configured to hide, return false to remove the property
++  if (auto value = MaskConfig::GetBool("window.InstallTrigger:hide");
++      value.has_value() && value.value()) {
++    return false;
++  }
++  return true;  // Default: expose (Firefox behavior)
++}
++
+ void nsGlobalWindowInner::GetInstallTrigger(
+     JSContext* aCx, JS::MutableHandle<JSObject*> aResult) {
+   // Return nullptr, to avoid breaking "typeof InstallTrigger !== 'undefined"
+@@ -2577,6 +2593,44 @@ void nsGlobalWindowInner::GetInstallTrigger(
+   aResult.set(nullptr);
+ }
+
++// Camoufox: Static method to control window.chrome visibility
++/* static */
++bool nsGlobalWindowInner::ShouldExposeChrome(JSContext* aCx, JSObject* aObj) {
++  // Only expose if explicitly enabled via config
++  if (auto value = MaskConfig::GetBool("window.chrome");
++      value.has_value() && value.value()) {
++    return true;
++  }
++  return false;  // Default: hidden (Firefox behavior)
++}
++
++// Camoufox: Chrome browser window.chrome API
++WindowChrome* nsGlobalWindowInner::GetChrome() {
++  if (!mChrome) {
++    mChrome = new WindowChrome(this->AsGlobal());
++  }
++  return mChrome;
++}
++
++// Camoufox: Static method to control window.webkit visibility
++/* static */
++bool nsGlobalWindowInner::ShouldExposeWebkit(JSContext* aCx, JSObject* aObj) {
++  // Only expose if explicitly enabled via config
++  if (auto value = MaskConfig::GetBool("window.webkit");
++      value.has_value() && value.value()) {
++    return true;
++  }
++  return false;  // Default: hidden (Firefox behavior)
++}
++
++// Camoufox: Safari browser window.webkit API
++WindowWebkit* nsGlobalWindowInner::GetWebkit() {
++  if (!mWebkit) {
++    mWebkit = new WindowWebkit(this->AsGlobal());
++  }
++  return mWebkit;
++}
++
+ nsIDOMWindowUtils* nsGlobalWindowInner::GetWindowUtils(ErrorResult& aRv) {
+   FORWARD_TO_OUTER_OR_THROW(WindowUtils, (), aRv, nullptr);
+ }
+diff --git a/dom/base/nsGlobalWindowInner.h b/dom/base/nsGlobalWindowInner.h
+index c7440b40ea..82c74cc8dc 100644
+--- a/dom/base/nsGlobalWindowInner.h
++++ b/dom/base/nsGlobalWindowInner.h
+@@ -140,6 +140,8 @@ class VRDisplay;
+ enum class VRDisplayEventReason : uint8_t;
+ class VREventObserver;
+ struct WindowPostMessageOptions;
++class WindowChrome;
++class WindowWebkit;
+ class Worklet;
+ namespace cache {
+ class CacheStorage;
+@@ -226,6 +228,15 @@ class nsGlobalWindowInner final : public mozilla::dom::EventTarget,
+       nsGlobalWindowOuter* aOuter, bool aIsChrome,
+       mozilla::dom::WindowGlobalChild* aActor);
+
++  // Camoufox: Static method to control InstallTrigger visibility
++  static bool ShouldExposeInstallTrigger(JSContext* aCx, JSObject* aObj);
++
++  // Camoufox: Static method to control window.chrome visibility
++  static bool ShouldExposeChrome(JSContext* aCx, JSObject* aObj);
++
++  // Camoufox: Static method to control window.webkit visibility
++  static bool ShouldExposeWebkit(JSContext* aCx, JSObject* aObj);
++
+   // nsISupports
+   NS_DECL_ISUPPORTS_INHERITED
+   NS_IMETHOD_(void) DeleteCycleCollectable() override;
+@@ -763,6 +774,10 @@ class nsGlobalWindowInner final : public mozilla::dom::EventTarget,
+       mozilla::ErrorResult& aError);
+   nsScreen* Screen();
+   bool HasScreen() const { return !!mScreen; }
++  // Camoufox: Chrome browser window.chrome API
++  mozilla::dom::WindowChrome* GetChrome();
++  // Camoufox: Safari browser window.webkit API
++  mozilla::dom::WindowWebkit* GetWebkit();
+   void MoveTo(int32_t aXPos, int32_t aYPos,
+               mozilla::dom::CallerType aCallerType,
+               mozilla::ErrorResult& aError);
+@@ -1379,6 +1394,8 @@ class nsGlobalWindowInner final : public mozilla::dom::EventTarget,
+       mGamepads;
+
+   RefPtr<nsScreen> mScreen;
++  RefPtr<mozilla::dom::WindowChrome> mChrome;  // Camoufox: Chrome browser API
++  RefPtr<mozilla::dom::WindowWebkit> mWebkit;  // Camoufox: Safari browser API
+
+   RefPtr<mozilla::dom::BarProp> mMenubar;
+   RefPtr<mozilla::dom::BarProp> mToolbar;
+diff --git a/dom/base/nsPluginArray.cpp b/dom/base/nsPluginArray.cpp
+index 1a63346d3f..03bf2e1fe4 100644
+--- a/dom/base/nsPluginArray.cpp
++++ b/dom/base/nsPluginArray.cpp
+@@ -86,13 +86,18 @@ nsPluginArray::nsPluginArray(nsPIDOMWindowInner* aWindow) : mWindow(aWindow) {
+         mimeTypesFixed[i] = mimeTypes[i];
+       }
+       mMimeTypeArray = MakeRefPtr<nsMimeTypeArray>(aWindow, mimeTypesFixed);
+-    } else {
+-      // Fallback to default mime types
++    } else if (!mPlugins.IsEmpty()) {
++      // Fallback to default mime types (only if we have plugins)
+       mozilla::Array<RefPtr<nsMimeType>, 2> mimeTypes;
+       for (uint32_t i = 0; i < std::size(kMimeTypeNames); ++i) {
+         mimeTypes[i] = MakeRefPtr<nsMimeType>(mPlugins[0], kMimeTypeNames[i]);
+       }
+       mMimeTypeArray = MakeRefPtr<nsMimeTypeArray>(aWindow, mimeTypes);
++    } else {
++      // Empty plugins array - create empty MimeTypeArray (Safari iOS behavior)
++      // WebIDL requires non-null MimeTypeArray, so create one with null entries
++      mozilla::Array<RefPtr<nsMimeType>, 2> emptyMimeTypes;
++      mMimeTypeArray = MakeRefPtr<nsMimeTypeArray>(aWindow, emptyMimeTypes);
+     }
+   } else {
+     // Create the hard-coded PDF plugin types that share MIME type arrays.
+diff --git a/dom/performance/MemoryInfo.cpp b/dom/performance/MemoryInfo.cpp
+new file mode 100644
+index 0000000000..5166f0119e
+--- /dev/null
++++ b/dom/performance/MemoryInfo.cpp
+@@ -0,0 +1,52 @@
++/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
++/* vim: set ts=8 sts=2 et sw=2 tw=80: */
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
++
++// Camoufox: Chrome browser performance.memory API compatibility
++
++#include "MemoryInfo.h"
++#include "mozilla/dom/MemoryInfoBinding.h"
++#include "nsIGlobalObject.h"
++#include "js/MemoryMetrics.h"
++
++namespace mozilla::dom {
++
++NS_IMPL_CYCLE_COLLECTION_WRAPPERCACHE(MemoryInfo, mGlobal)
++
++NS_IMPL_CYCLE_COLLECTING_ADDREF(MemoryInfo)
++NS_IMPL_CYCLE_COLLECTING_RELEASE(MemoryInfo)
++
++NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(MemoryInfo)
++  NS_WRAPPERCACHE_INTERFACE_MAP_ENTRY
++  NS_INTERFACE_MAP_ENTRY(nsISupports)
++NS_INTERFACE_MAP_END
++
++MemoryInfo::MemoryInfo(nsIGlobalObject* aGlobal) : mGlobal(aGlobal) {}
++
++MemoryInfo::~MemoryInfo() = default;
++
++JSObject* MemoryInfo::WrapObject(JSContext* aCx,
++                                 JS::Handle<JSObject*> aGivenProto) {
++  return MemoryInfo_Binding::Wrap(aCx, this, aGivenProto);
++}
++
++uint64_t MemoryInfo::JsHeapSizeLimit() const {
++  // Return a reasonable default heap limit (4GB)
++  // Chrome typically reports the V8 heap limit
++  return 4294967296ULL;
++}
++
++uint64_t MemoryInfo::TotalJSHeapSize() const {
++  // Return a plausible total heap size
++  // In practice, we could try to get actual values from SpiderMonkey
++  return 50000000ULL;  // ~50MB as a reasonable default
++}
++
++uint64_t MemoryInfo::UsedJSHeapSize() const {
++  // Return a plausible used heap size (less than total)
++  return 35000000ULL;  // ~35MB as a reasonable default
++}
++
++}  // namespace mozilla::dom
+diff --git a/dom/performance/MemoryInfo.h b/dom/performance/MemoryInfo.h
+new file mode 100644
+index 0000000000..2d91dd79fa
+--- /dev/null
++++ b/dom/performance/MemoryInfo.h
+@@ -0,0 +1,45 @@
++/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
++/* vim: set ts=8 sts=2 et sw=2 tw=80: */
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
++
++// Camoufox: Chrome browser performance.memory API compatibility
++
++#ifndef mozilla_dom_MemoryInfo_h
++#define mozilla_dom_MemoryInfo_h
++
++#include "nsISupports.h"
++#include "nsWrapperCache.h"
++#include "nsCycleCollectionParticipant.h"
++
++class nsIGlobalObject;
++
++namespace mozilla::dom {
++
++class MemoryInfo final : public nsISupports, public nsWrapperCache {
++ public:
++  NS_DECL_CYCLE_COLLECTING_ISUPPORTS
++  NS_DECL_CYCLE_COLLECTION_WRAPPERCACHE_CLASS(MemoryInfo)
++
++  explicit MemoryInfo(nsIGlobalObject* aGlobal);
++
++  nsIGlobalObject* GetParentObject() const { return mGlobal; }
++
++  JSObject* WrapObject(JSContext* aCx,
++                       JS::Handle<JSObject*> aGivenProto) override;
++
++  // WebIDL attributes
++  uint64_t JsHeapSizeLimit() const;
++  uint64_t TotalJSHeapSize() const;
++  uint64_t UsedJSHeapSize() const;
++
++ private:
++  ~MemoryInfo();
++
++  nsCOMPtr<nsIGlobalObject> mGlobal;
++};
++
++}  // namespace mozilla::dom
++
++#endif  // mozilla_dom_MemoryInfo_h
+diff --git a/dom/performance/Performance.cpp b/dom/performance/Performance.cpp
+index 6906b5726e..e42ca84292 100644
+--- a/dom/performance/Performance.cpp
++++ b/dom/performance/Performance.cpp
+@@ -5,6 +5,7 @@
+  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
+ #include "Performance.h"
++#include "MaskConfig.hpp"
+
+ #include <sstream>
+
+@@ -88,6 +89,17 @@ already_AddRefed<Performance> Performance::CreateForWorker(
+   return performance.forget();
+ }
+
++// Camoufox: Static method to control performance.memory visibility
++/* static */
++bool Performance::ShouldExposeMemory(JSContext* aCx, JSObject* aGlobal) {
++  // Only expose if explicitly enabled via config
++  if (auto value = MaskConfig::GetBool("performance.memory");
++      value.has_value() && value.value()) {
++    return true;
++  }
++  return false;  // Default: hidden (Firefox behavior)
++}
++
+ /* static */
+ already_AddRefed<Performance> Performance::Get(JSContext* aCx,
+                                                nsIGlobalObject* aGlobal) {
+diff --git a/dom/performance/Performance.h b/dom/performance/Performance.h
+index 1e417dc2ae..a4e0a33995 100644
+--- a/dom/performance/Performance.h
++++ b/dom/performance/Performance.h
+@@ -39,6 +39,7 @@ class PerformanceEventTiming;
+ class PerformanceInteractionMetrics;
+ class WorkerGlobalScope;
+ class EventCounts;
++class MemoryInfo;
+
+ // Base class for main-thread and worker Performance API
+ class Performance : public DOMEventTargetHelper {
+@@ -48,6 +49,9 @@ class Performance : public DOMEventTargetHelper {
+
+   static bool IsObserverEnabled(JSContext* aCx, JSObject* aGlobal);
+
++  // Camoufox: Static method to control performance.memory visibility
++  static bool ShouldExposeMemory(JSContext* aCx, JSObject* aGlobal);
++
+   static already_AddRefed<Performance> CreateForMainThread(
+       nsPIDOMWindowInner* aWindow, nsIPrincipal* aPrincipal,
+       nsDOMNavigationTiming* aDOMTiming, nsITimedChannel* aChannel);
+@@ -151,6 +155,9 @@ class Performance : public DOMEventTargetHelper {
+
+   virtual uint64_t InteractionCount() = 0;
+
++  // Camoufox: Chrome browser performance.memory API
++  virtual MemoryInfo* GetMemory() { return nullptr; }
++
+   virtual void QueueNavigationTimingEntry() = 0;
+
+   virtual void UpdateNavigationTimingEntry() = 0;
+diff --git a/dom/performance/PerformanceMainThread.cpp b/dom/performance/PerformanceMainThread.cpp
+index 66d32bf2ba..69caad3743 100644
+--- a/dom/performance/PerformanceMainThread.cpp
++++ b/dom/performance/PerformanceMainThread.cpp
+@@ -7,6 +7,7 @@
+ #include "PerformanceMainThread.h"
+
+ #include "LargestContentfulPaint.h"
++#include "MemoryInfo.h"
+ #include "PerformanceEventTiming.h"
+ #include "PerformanceInteractionMetrics.h"
+ #include "PerformanceNavigation.h"
+@@ -561,6 +562,14 @@ uint64_t PerformanceMainThread::InteractionCount() {
+   return mInteractionMetrics.InteractionCount();
+ }
+
++// Camoufox: Chrome browser performance.memory API
++MemoryInfo* PerformanceMainThread::GetMemory() {
++  if (!mMemory) {
++    mMemory = new MemoryInfo(GetParentObject());
++  }
++  return mMemory;
++}
++
+ void PerformanceMainThread::GetEntries(
+     nsTArray<RefPtr<PerformanceEntry>>& aRetval) {
+   aRetval = mResourceEntries.Clone();
+diff --git a/dom/performance/PerformanceMainThread.h b/dom/performance/PerformanceMainThread.h
+index 8321b63c77..77a479ba57 100644
+--- a/dom/performance/PerformanceMainThread.h
++++ b/dom/performance/PerformanceMainThread.h
+@@ -114,6 +114,9 @@ class PerformanceMainThread final : public Performance,
+
+   uint64_t InteractionCount() override;
+
++  // Camoufox: Chrome browser performance.memory API
++  MemoryInfo* GetMemory() override;
++
+   bool IsGlobalObjectWindow() const override { return true; };
+
+   bool HasDispatchedInputEvent() const { return mHasDispatchedInputEvent; }
+@@ -162,6 +165,7 @@ class PerformanceMainThread final : public Performance,
+   RefPtr<PerformanceNavigation> mNavigation;
+   RefPtr<PerformancePaintTiming> mFCPTiming;
+   JS::Heap<JSObject*> mMozMemory;
++  RefPtr<MemoryInfo> mMemory;  // Camoufox: Chrome browser performance.memory
+
+   nsTArray<RefPtr<PerformanceEventTiming>> mEventTimingEntries;
+   nsTArray<RefPtr<LargestContentfulPaint>> mLargestContentfulPaintEntries;
+diff --git a/dom/performance/moz.build b/dom/performance/moz.build
+index fb685233c3..3292d6f193 100644
+--- a/dom/performance/moz.build
++++ b/dom/performance/moz.build
+@@ -11,6 +11,7 @@ EXPORTS.mozilla.dom += [
+     "CacheablePerformanceTimingData.h",
+     "EventCounts.h",
+     "LargestContentfulPaint.h",
++    "MemoryInfo.h",
+     "Performance.h",
+     "PerformanceEntry.h",
+     "PerformanceEventTiming.h",
+@@ -36,6 +37,7 @@ EXPORTS.mozilla.dom += [
+ UNIFIED_SOURCES += [
+     "EventCounts.cpp",
+     "LargestContentfulPaint.cpp",
++    "MemoryInfo.cpp",
+     "Performance.cpp",
+     "PerformanceEntry.cpp",
+     "PerformanceEventTiming.cpp",
+@@ -66,4 +68,7 @@ MOCHITEST_MANIFESTS += ["tests/mochitest.toml"]
+
+ include("/ipc/chromium/chromium-config.mozbuild")
+
++# Camoufox: DOM Mask configuration
++LOCAL_INCLUDES += ["/camoucfg"]
++
+ FINAL_LIBRARY = "xul"
+diff --git a/dom/webidl/MemoryInfo.webidl b/dom/webidl/MemoryInfo.webidl
+new file mode 100644
+index 0000000000..50939b2a2b
+--- /dev/null
++++ b/dom/webidl/MemoryInfo.webidl
+@@ -0,0 +1,14 @@
++/* -*- Mode: IDL; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/.
++ *
++ * Camoufox: Chrome browser performance.memory API compatibility
++ */
++
++[Exposed=Window]
++interface MemoryInfo {
++  readonly attribute unsigned long long jsHeapSizeLimit;
++  readonly attribute unsigned long long totalJSHeapSize;
++  readonly attribute unsigned long long usedJSHeapSize;
++};
+diff --git a/dom/webidl/Navigator.webidl b/dom/webidl/Navigator.webidl
+index 84252a2ee3..5e3aec06ea 100644
+--- a/dom/webidl/Navigator.webidl
++++ b/dom/webidl/Navigator.webidl
+@@ -405,7 +405,8 @@ partial interface Navigator {
+ };
+
+ // https://wicg.github.io/ua-client-hints/
++// Camoufox: Added Func to allow hiding for Safari spoofing
+ partial interface Navigator {
+-  [SameObject]
++  [SameObject, Func="Navigator::ShouldExposeUserAgentData"]
+   readonly attribute NavigatorUAData userAgentData;
+ };
+diff --git a/dom/webidl/Performance.webidl b/dom/webidl/Performance.webidl
+index 06ae9fa4fc..dfd9dd294c 100644
+--- a/dom/webidl/Performance.webidl
++++ b/dom/webidl/Performance.webidl
+@@ -98,3 +98,10 @@ partial interface Performance {
+   [Pref="dom.performance.event_timing.enable_interactionid"]
+   readonly attribute unsigned long long interactionCount;
+ };
++
++// Camoufox: Chrome browser performance.memory compatibility
++[Exposed=Window]
++partial interface Performance {
++  [SameObject, Func="Performance::ShouldExposeMemory"]
++  readonly attribute MemoryInfo? memory;
++};
+diff --git a/dom/webidl/Window.webidl b/dom/webidl/Window.webidl
+index d77f0054d3..0887b5fd5c 100644
+--- a/dom/webidl/Window.webidl
++++ b/dom/webidl/Window.webidl
+@@ -565,7 +565,8 @@ partial interface Window {
+    * We maintain this stub to avoid breaking websites that do
+    * "typeof InstallTrigger !== 'undefined" to detect Firefox
+    */
+-  [Replaceable, Deprecated="InstallTriggerDeprecated", Pref="extensions.InstallTrigger.enabled"]
++  [Replaceable, Deprecated="InstallTriggerDeprecated", Pref="extensions.InstallTrigger.enabled",
++   Func="nsGlobalWindowInner::ShouldExposeInstallTrigger"]
+   readonly attribute object? InstallTrigger;
+
+   /**
+@@ -919,3 +920,15 @@ partial interface Window {
+ partial interface Window {
+   [Pref="dom.origin_agent_cluster.enabled"] readonly attribute boolean originAgentCluster;
+ };
++
++// Camoufox: Chrome browser compatibility
++partial interface Window {
++  [Replaceable, Func="nsGlobalWindowInner::ShouldExposeChrome"]
++  readonly attribute WindowChrome? chrome;
++};
++
++// Camoufox: Safari browser compatibility
++partial interface Window {
++  [Replaceable, Func="nsGlobalWindowInner::ShouldExposeWebkit"]
++  readonly attribute WindowWebkit? webkit;
++};
+diff --git a/dom/webidl/WindowChrome.webidl b/dom/webidl/WindowChrome.webidl
+new file mode 100644
+index 0000000000..b94ae2be3c
+--- /dev/null
++++ b/dom/webidl/WindowChrome.webidl
+@@ -0,0 +1,13 @@
++/* -*- Mode: IDL; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/.
++ *
++ * Camoufox: Chrome browser window.chrome API compatibility stub
++ */
++
++[Exposed=Window]
++interface WindowChrome {
++  // Chrome's runtime API stub - returns an empty object for basic detection
++  readonly attribute object? runtime;
++};
+diff --git a/dom/webidl/WindowWebkit.webidl b/dom/webidl/WindowWebkit.webidl
+new file mode 100644
+index 0000000000..853829d94f
+--- /dev/null
++++ b/dom/webidl/WindowWebkit.webidl
+@@ -0,0 +1,13 @@
++/* -*- Mode: IDL; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/.
++ *
++ * Camoufox: Safari browser window.webkit API compatibility stub
++ */
++
++[Exposed=Window]
++interface WindowWebkit {
++  // Safari's messageHandlers API stub - returns an empty object for basic detection
++  readonly attribute object? messageHandlers;
++};
+diff --git a/dom/webidl/moz.build b/dom/webidl/moz.build
+index 442714fd35..e5d05bf859 100644
+--- a/dom/webidl/moz.build
++++ b/dom/webidl/moz.build
+@@ -784,6 +784,7 @@ WEBIDL_FILES = [
+     "MediaTrackCapabilities.webidl",
+     "MediaTrackSettings.webidl",
+     "MediaTrackSupportedConstraints.webidl",
++    "MemoryInfo.webidl",
+     "MerchantValidationEvent.webidl",
+     "MessageChannel.webidl",
+     "MessageEvent.webidl",
+@@ -1085,7 +1086,9 @@ WEBIDL_FILES = [
+     "WebTransportSendReceiveStream.webidl",
+     "WebXR.webidl",
+     "WheelEvent.webidl",
++    "WindowChrome.webidl",
+     "WindowOrWorkerGlobalScope.webidl",
++    "WindowWebkit.webidl",
+     "Worker.webidl",
+     "WorkerDebuggerGlobalScope.webidl",
+     "WorkerGlobalScope.webidl",

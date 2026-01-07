@@ -9,7 +9,7 @@
  * - Changing how existing properties are detected
  * - Fixing bugs in detection that change output
  */
-export const DETECTOR_VERSION = 1;
+export const DETECTOR_VERSION = 2;
 
 // Type definitions for browser APIs not in standard TypeScript
 declare global {
@@ -70,6 +70,29 @@ declare global {
 
 export interface CamoufoxConfig {
   [key: string]: unknown;
+}
+
+export interface BrowserAPIDetection {
+  // Chrome-specific
+  hasUserAgentData: boolean;
+  hasWindowChrome: boolean;
+  hasPerformanceMemory: boolean;
+
+  // Safari-specific
+  hasWindowWebkit: boolean;
+
+  // Firefox-specific
+  hasInstallTrigger: boolean;
+
+  // Opera-specific
+  hasWindowOpera: boolean;
+
+  // Vendor info (helps identify browser)
+  vendor: string;
+  vendorSub: string;
+
+  // Detected browser based on APIs
+  detectedBrowser: "chrome" | "safari" | "firefox" | "opera" | "edge" | "unknown";
 }
 
 export interface DetectionResult {
@@ -811,6 +834,51 @@ export async function detectVoices(): Promise<CamoufoxConfig> {
 }
 
 /**
+ * Detect browser-specific APIs
+ * These APIs help identify which browser is actually being used,
+ * regardless of what the User-Agent claims.
+ */
+export function detectBrowserAPIs(): BrowserAPIDetection {
+  const win = window as unknown as Record<string, unknown>;
+  const perf = performance as unknown as Record<string, unknown>;
+
+  // Check each browser-specific API
+  const hasUserAgentData = "userAgentData" in navigator;
+  const hasWindowChrome = "chrome" in win;
+  const hasPerformanceMemory = "memory" in perf;
+  const hasWindowWebkit = "webkit" in win;
+  const hasInstallTrigger = "InstallTrigger" in win;
+  const hasWindowOpera = "opera" in win || "opr" in win;
+
+  // Determine browser from API presence
+  let detectedBrowser: BrowserAPIDetection["detectedBrowser"] = "unknown";
+  if (hasInstallTrigger) {
+    detectedBrowser = "firefox";
+  } else if (hasWindowWebkit && !hasWindowChrome) {
+    detectedBrowser = "safari";
+  } else if (hasWindowOpera) {
+    detectedBrowser = "opera";
+  } else if (hasWindowChrome && hasUserAgentData) {
+    detectedBrowser = "chrome";
+  } else if (hasWindowChrome) {
+    // Chrome without userAgentData could be older Chrome or Edge
+    detectedBrowser = "chrome";
+  }
+
+  return {
+    hasUserAgentData,
+    hasWindowChrome,
+    hasPerformanceMemory,
+    hasWindowWebkit,
+    hasInstallTrigger,
+    hasWindowOpera,
+    vendor: navigator.vendor || "",
+    vendorSub: navigator.vendorSub || "",
+    detectedBrowser,
+  };
+}
+
+/**
  * Detect all fingerprint properties
  */
 export async function detectAll(
@@ -833,6 +901,18 @@ export async function detectAll(
   Object.assign(config, detectMediaQueries());
   Object.assign(config, detectNetworkInfo());
   Object.assign(config, detectMediaCodecs());
+
+  // Browser-specific API detection
+  const browserAPIs = detectBrowserAPIs();
+  config["browserAPIs:hasUserAgentData"] = browserAPIs.hasUserAgentData;
+  config["browserAPIs:hasWindowChrome"] = browserAPIs.hasWindowChrome;
+  config["browserAPIs:hasPerformanceMemory"] = browserAPIs.hasPerformanceMemory;
+  config["browserAPIs:hasWindowWebkit"] = browserAPIs.hasWindowWebkit;
+  config["browserAPIs:hasInstallTrigger"] = browserAPIs.hasInstallTrigger;
+  config["browserAPIs:hasWindowOpera"] = browserAPIs.hasWindowOpera;
+  config["browserAPIs:vendor"] = browserAPIs.vendor;
+  config["browserAPIs:vendorSub"] = browserAPIs.vendorSub;
+  config["browserAPIs:detectedBrowser"] = browserAPIs.detectedBrowser;
 
   // Async detectors
   const asyncResults = await Promise.allSettled([

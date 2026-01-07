@@ -27,7 +27,7 @@ run() {
 run 'cp -v ../assets/search-config.json services/settings/dumps/main/search-config.json'
 
 # vs_pack.py issue... should be temporary
-run 'cp -v ../patches/librewolf/pack_vs.py build/vs/'
+run 'cp -v ../patches/001-librewolf/pack_vs.py build/vs/'
 
 # Apply most recent `settings` repository files
 run 'mkdir -p lw'

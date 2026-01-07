@@ -127,6 +127,7 @@ function groupConfigKeys(config: CamoufoxConfig): Map<string, string[]> {
     "mediaQuery",
     "mediaCodec",
     "canvas",
+    "browserAPIs",
   ];
 
   // Initialize groups in order
@@ -185,6 +186,7 @@ function getCategoryName(category: string): string {
     mediaQuery: "Media Queries",
     mediaCodec: "Media Codecs",
     canvas: "Canvas Fingerprints",
+    browserAPIs: "Browser API Detection",
     other: "Other",
   };
   return names[category] || category;
