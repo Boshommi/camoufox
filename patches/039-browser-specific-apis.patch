@@ -5,7 +5,7 @@ index 7624d760fc..1322021be8 100644
 @@ -518,9 +518,21 @@ void Navigator::GetOscpu(nsAString& aOSCPU, CallerType aCallerType,
    CopyASCIItoUTF16(oscpu, aOSCPU);
  }
-
+ 
 -void Navigator::GetVendor(nsAString& aVendor) { aVendor.Truncate(); }
 +void Navigator::GetVendor(nsAString& aVendor) {
 +  if (auto value = MaskConfig::GetString("navigator.vendor")) {
@@ -14,7 +14,7 @@ index 7624d760fc..1322021be8 100644
 +  }
 +  aVendor.Truncate();
 +}
-
+ 
 -void Navigator::GetVendorSub(nsAString& aVendorSub) { aVendorSub.Truncate(); }
 +void Navigator::GetVendorSub(nsAString& aVendorSub) {
 +  if (auto value = MaskConfig::GetString("navigator.vendorSub")) {
@@ -23,13 +23,13 @@ index 7624d760fc..1322021be8 100644
 +  }
 +  aVendorSub.Truncate();
 +}
-
+ 
  void Navigator::GetProduct(nsAString& aProduct) {
    if (auto value = MaskConfig::GetString("navigator.product")) {
 @@ -2383,14 +2395,18 @@ NavigatorLogin* Navigator::Login() {
    return mLogin;
  }
-
+ 
 -NavigatorUAData* Navigator::UserAgentData() {
 -  // Check if userAgentData is disabled
 +// Camoufox: Control userAgentData visibility via Func attribute
@@ -44,14 +44,14 @@ index 7624d760fc..1322021be8 100644
    }
 +  return true;  // Default: enabled (Chrome compatibility)
 +}
-
+ 
 +NavigatorUAData* Navigator::UserAgentData() {
 +  // Visibility is controlled by Func attribute (ShouldExposeUserAgentData)
    if (!mUserAgentData) {
      nsCOMPtr<nsIGlobalObject> global = do_QueryInterface(mWindow);
      if (global) {
 @@ -2409,6 +2425,11 @@ dom::PrivateAttribution* Navigator::PrivateAttribution() {
-
+ 
  /* static */
  bool Navigator::Webdriver() {
 +  // Camoufox: Allow overriding webdriver detection
@@ -67,14 +67,14 @@ index c7ef6981f7..1a8b721cde 100644
 --- a/dom/base/Navigator.h
 +++ b/dom/base/Navigator.h
 @@ -238,6 +238,9 @@ class Navigator final : public nsISupports, public nsWrapperCache {
-
+ 
    static bool HasMidiSupport(JSContext* /* unused */, JSObject* /* unused */);
-
+ 
 +  // Camoufox: Control userAgentData visibility
 +  static bool ShouldExposeUserAgentData(JSContext*, JSObject*);
 +
    nsPIDOMWindowInner* GetParentObject() const { return GetWindow(); }
-
+ 
    virtual JSObject* WrapObject(JSContext* cx,
 diff --git a/dom/base/WindowChrome.cpp b/dom/base/WindowChrome.cpp
 new file mode 100644
@@ -174,7 +174,7 @@ index 0000000000..c32f664eac
 +#endif  // mozilla_dom_WindowChrome_h
 diff --git a/dom/base/WindowSafari.cpp b/dom/base/WindowSafari.cpp
 new file mode 100644
-index 0000000000..1234567890
+index 0000000000..e7cb667ec6
 --- /dev/null
 +++ b/dom/base/WindowSafari.cpp
 @@ -0,0 +1,41 @@
@@ -221,7 +221,7 @@ index 0000000000..1234567890
 +}  // namespace mozilla::dom
 diff --git a/dom/base/WindowSafari.h b/dom/base/WindowSafari.h
 new file mode 100644
-index 0000000000..1234567891
+index 0000000000..f24514b3db
 --- /dev/null
 +++ b/dom/base/WindowSafari.h
 @@ -0,0 +1,43 @@
@@ -365,10 +365,10 @@ index 0000000000..0fb2eacfc0
 +
 +#endif  // mozilla_dom_WindowWebkit_h
 diff --git a/dom/base/moz.build b/dom/base/moz.build
-index da04d294e9..9f5c7c659a 100644
+index da04d294e9..55ca8f3c72 100644
 --- a/dom/base/moz.build
 +++ b/dom/base/moz.build
-@@ -292,8 +292,12 @@ EXPORTS.mozilla.dom += [
+@@ -292,8 +292,11 @@ EXPORTS.mozilla.dom += [
      "VideoFrameProvider.h",
      "ViewportMetaData.h",
      "VisualViewport.h",
@@ -378,9 +378,9 @@ index da04d294e9..9f5c7c659a 100644
 +    "WindowSafari.h",
 +    "WindowWebkit.h",
  ]
-
+ 
  if CONFIG["FUZZING"]:
-@@ -498,9 +500,13 @@ UNIFIED_SOURCES += [
+@@ -498,9 +501,12 @@ UNIFIED_SOURCES += [
      "UserActivation.cpp",
      "ViewportMetaData.cpp",
      "VisualViewport.cpp",
@@ -392,35 +392,35 @@ index da04d294e9..9f5c7c659a 100644
 +    "WindowWebkit.cpp",
      "XPathGenerator.cpp",
  ]
-
+ 
 diff --git a/dom/base/nsGlobalWindowInner.cpp b/dom/base/nsGlobalWindowInner.cpp
-index c59f79f4cf..4d937cd169 100644
+index c59f79f4cf..b6b2c91cbc 100644
 --- a/dom/base/nsGlobalWindowInner.cpp
 +++ b/dom/base/nsGlobalWindowInner.cpp
 @@ -6,6 +6,9 @@
-
+ 
  #include "nsGlobalWindowInner.h"
  #include "MaskConfig.hpp"
 +#include "WindowChrome.h"
 +#include "WindowSafari.h"
 +#include "WindowWebkit.h"
-
+ 
  #include <inttypes.h>
  #include <stdio.h>
 @@ -1183,6 +1186,9 @@ void nsGlobalWindowInner::FreeInnerObjects() {
    }
-
+ 
    mScreen = nullptr;
 +  mChrome = nullptr;  // Camoufox
 +  mSafari = nullptr;  // Camoufox
 +  mWebkit = nullptr;  // Camoufox
-
+ 
    if (mDoc) {
      // Remember the document's principal, URI, and policyContainer.
-@@ -2564,6 +2568,18 @@ bool nsGlobalWindowInner::ShouldReportForServiceWorkerScope(
+@@ -2564,6 +2570,18 @@ bool nsGlobalWindowInner::ShouldReportForServiceWorkerScope(
    return result;
  }
-
+ 
 +// Camoufox: Static method to control InstallTrigger visibility
 +/* static */
 +bool nsGlobalWindowInner::ShouldExposeInstallTrigger(JSContext* aCx,
@@ -436,10 +436,10 @@ index c59f79f4cf..4d937cd169 100644
  void nsGlobalWindowInner::GetInstallTrigger(
      JSContext* aCx, JS::MutableHandle<JSObject*> aResult) {
    // Return nullptr, to avoid breaking "typeof InstallTrigger !== 'undefined"
-@@ -2577,6 +2593,44 @@ void nsGlobalWindowInner::GetInstallTrigger(
+@@ -2577,6 +2595,63 @@ void nsGlobalWindowInner::GetInstallTrigger(
    aResult.set(nullptr);
  }
-
+ 
 +// Camoufox: Static method to control window.chrome visibility
 +/* static */
 +bool nsGlobalWindowInner::ShouldExposeChrome(JSContext* aCx, JSObject* aObj) {
@@ -501,7 +501,7 @@ index c59f79f4cf..4d937cd169 100644
    FORWARD_TO_OUTER_OR_THROW(WindowUtils, (), aRv, nullptr);
  }
 diff --git a/dom/base/nsGlobalWindowInner.h b/dom/base/nsGlobalWindowInner.h
-index c7440b40ea..82c74cc8dc 100644
+index c7440b40ea..66c8491dbc 100644
 --- a/dom/base/nsGlobalWindowInner.h
 +++ b/dom/base/nsGlobalWindowInner.h
 @@ -140,6 +140,9 @@ class VRDisplay;
@@ -514,10 +514,10 @@ index c7440b40ea..82c74cc8dc 100644
  class Worklet;
  namespace cache {
  class CacheStorage;
-@@ -226,6 +228,15 @@ class nsGlobalWindowInner final : public mozilla::dom::EventTarget,
+@@ -226,6 +229,18 @@ class nsGlobalWindowInner final : public mozilla::dom::EventTarget,
        nsGlobalWindowOuter* aOuter, bool aIsChrome,
        mozilla::dom::WindowGlobalChild* aActor);
-
+ 
 +  // Camoufox: Static method to control InstallTrigger visibility
 +  static bool ShouldExposeInstallTrigger(JSContext* aCx, JSObject* aObj);
 +
@@ -533,7 +533,7 @@ index c7440b40ea..82c74cc8dc 100644
    // nsISupports
    NS_DECL_ISUPPORTS_INHERITED
    NS_IMETHOD_(void) DeleteCycleCollectable() override;
-@@ -763,6 +774,10 @@ class nsGlobalWindowInner final : public mozilla::dom::EventTarget,
+@@ -763,6 +778,12 @@ class nsGlobalWindowInner final : public mozilla::dom::EventTarget,
        mozilla::ErrorResult& aError);
    nsScreen* Screen();
    bool HasScreen() const { return !!mScreen; }
@@ -546,14 +546,14 @@ index c7440b40ea..82c74cc8dc 100644
    void MoveTo(int32_t aXPos, int32_t aYPos,
                mozilla::dom::CallerType aCallerType,
                mozilla::ErrorResult& aError);
-@@ -1379,6 +1394,8 @@ class nsGlobalWindowInner final : public mozilla::dom::EventTarget,
+@@ -1379,6 +1400,9 @@ class nsGlobalWindowInner final : public mozilla::dom::EventTarget,
        mGamepads;
-
+ 
    RefPtr<nsScreen> mScreen;
 +  RefPtr<mozilla::dom::WindowChrome> mChrome;  // Camoufox: Chrome browser API
 +  RefPtr<mozilla::dom::WindowSafari> mSafari;  // Camoufox: Safari browser API (push notifications)
 +  RefPtr<mozilla::dom::WindowWebkit> mWebkit;  // Camoufox: Safari browser API (messageHandlers)
-
+ 
    RefPtr<mozilla::dom::BarProp> mMenubar;
    RefPtr<mozilla::dom::BarProp> mToolbar;
 diff --git a/dom/base/nsPluginArray.cpp b/dom/base/nsPluginArray.cpp
@@ -696,16 +696,16 @@ index 6906b5726e..e42ca84292 100644
 +++ b/dom/performance/Performance.cpp
 @@ -5,6 +5,7 @@
   * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
-
+ 
  #include "Performance.h"
 +#include "MaskConfig.hpp"
-
+ 
  #include <sstream>
-
+ 
 @@ -88,6 +89,17 @@ already_AddRefed<Performance> Performance::CreateForWorker(
    return performance.forget();
  }
-
+ 
 +// Camoufox: Static method to control performance.memory visibility
 +/* static */
 +bool Performance::ShouldExposeMemory(JSContext* aCx, JSObject* aGlobal) {
@@ -729,13 +729,13 @@ index 1e417dc2ae..a4e0a33995 100644
  class WorkerGlobalScope;
  class EventCounts;
 +class MemoryInfo;
-
+ 
  // Base class for main-thread and worker Performance API
  class Performance : public DOMEventTargetHelper {
 @@ -48,6 +49,9 @@ class Performance : public DOMEventTargetHelper {
-
+ 
    static bool IsObserverEnabled(JSContext* aCx, JSObject* aGlobal);
-
+ 
 +  // Camoufox: Static method to control performance.memory visibility
 +  static bool ShouldExposeMemory(JSContext* aCx, JSObject* aGlobal);
 +
@@ -743,14 +743,14 @@ index 1e417dc2ae..a4e0a33995 100644
        nsPIDOMWindowInner* aWindow, nsIPrincipal* aPrincipal,
        nsDOMNavigationTiming* aDOMTiming, nsITimedChannel* aChannel);
 @@ -151,6 +155,9 @@ class Performance : public DOMEventTargetHelper {
-
+ 
    virtual uint64_t InteractionCount() = 0;
-
+ 
 +  // Camoufox: Chrome browser performance.memory API
 +  virtual MemoryInfo* GetMemory() { return nullptr; }
 +
    virtual void QueueNavigationTimingEntry() = 0;
-
+ 
    virtual void UpdateNavigationTimingEntry() = 0;
 diff --git a/dom/performance/PerformanceMainThread.cpp b/dom/performance/PerformanceMainThread.cpp
 index 66d32bf2ba..69caad3743 100644
@@ -758,7 +758,7 @@ index 66d32bf2ba..69caad3743 100644
 +++ b/dom/performance/PerformanceMainThread.cpp
 @@ -7,6 +7,7 @@
  #include "PerformanceMainThread.h"
-
+ 
  #include "LargestContentfulPaint.h"
 +#include "MemoryInfo.h"
  #include "PerformanceEventTiming.h"
@@ -767,7 +767,7 @@ index 66d32bf2ba..69caad3743 100644
 @@ -561,6 +562,14 @@ uint64_t PerformanceMainThread::InteractionCount() {
    return mInteractionMetrics.InteractionCount();
  }
-
+ 
 +// Camoufox: Chrome browser performance.memory API
 +MemoryInfo* PerformanceMainThread::GetMemory() {
 +  if (!mMemory) {
@@ -784,21 +784,21 @@ index 8321b63c77..77a479ba57 100644
 --- a/dom/performance/PerformanceMainThread.h
 +++ b/dom/performance/PerformanceMainThread.h
 @@ -114,6 +114,9 @@ class PerformanceMainThread final : public Performance,
-
+ 
    uint64_t InteractionCount() override;
-
+ 
 +  // Camoufox: Chrome browser performance.memory API
 +  MemoryInfo* GetMemory() override;
 +
    bool IsGlobalObjectWindow() const override { return true; };
-
+ 
    bool HasDispatchedInputEvent() const { return mHasDispatchedInputEvent; }
 @@ -162,6 +165,7 @@ class PerformanceMainThread final : public Performance,
    RefPtr<PerformanceNavigation> mNavigation;
    RefPtr<PerformancePaintTiming> mFCPTiming;
    JS::Heap<JSObject*> mMozMemory;
 +  RefPtr<MemoryInfo> mMemory;  // Camoufox: Chrome browser performance.memory
-
+ 
    nsTArray<RefPtr<PerformanceEventTiming>> mEventTimingEntries;
    nsTArray<RefPtr<LargestContentfulPaint>> mLargestContentfulPaintEntries;
 diff --git a/dom/performance/moz.build b/dom/performance/moz.build
@@ -822,9 +822,9 @@ index fb685233c3..3292d6f193 100644
      "PerformanceEntry.cpp",
      "PerformanceEventTiming.cpp",
 @@ -66,4 +68,7 @@ MOCHITEST_MANIFESTS += ["tests/mochitest.toml"]
-
+ 
  include("/ipc/chromium/chromium-config.mozbuild")
-
+ 
 +# Camoufox: DOM Mask configuration
 +LOCAL_INCLUDES += ["/camoucfg"]
 +
@@ -855,7 +855,7 @@ index 84252a2ee3..5e3aec06ea 100644
 +++ b/dom/webidl/Navigator.webidl
 @@ -405,7 +405,8 @@ partial interface Navigator {
  };
-
+ 
  // https://wicg.github.io/ua-client-hints/
 +// Camoufox: Added Func to allow hiding for Safari spoofing
  partial interface Navigator {
@@ -879,7 +879,7 @@ index 06ae9fa4fc..dfd9dd294c 100644
 +  readonly attribute MemoryInfo? memory;
 +};
 diff --git a/dom/webidl/Window.webidl b/dom/webidl/Window.webidl
-index d77f0054d3..0887b5fd5c 100644
+index d77f0054d3..4f8510782a 100644
 --- a/dom/webidl/Window.webidl
 +++ b/dom/webidl/Window.webidl
 @@ -565,7 +565,8 @@ partial interface Window {
@@ -890,9 +890,9 @@ index d77f0054d3..0887b5fd5c 100644
 +  [Replaceable, Deprecated="InstallTriggerDeprecated", Pref="extensions.InstallTrigger.enabled",
 +   Func="nsGlobalWindowInner::ShouldExposeInstallTrigger"]
    readonly attribute object? InstallTrigger;
-
+ 
    /**
-@@ -919,3 +920,15 @@ partial interface Window {
+@@ -919,3 +920,21 @@ partial interface Window {
  partial interface Window {
    [Pref="dom.origin_agent_cluster.enabled"] readonly attribute boolean originAgentCluster;
  };
@@ -935,7 +935,7 @@ index 0000000000..b94ae2be3c
 +};
 diff --git a/dom/webidl/WindowSafari.webidl b/dom/webidl/WindowSafari.webidl
 new file mode 100644
-index 0000000000..1234567892
+index 0000000000..767b881717
 --- /dev/null
 +++ b/dom/webidl/WindowSafari.webidl
 @@ -0,0 +1,13 @@
@@ -972,7 +972,7 @@ index 0000000000..853829d94f
 +  readonly attribute object? messageHandlers;
 +};
 diff --git a/dom/webidl/moz.build b/dom/webidl/moz.build
-index 442714fd35..e5d05bf859 100644
+index 442714fd35..db6951023f 100644
 --- a/dom/webidl/moz.build
 +++ b/dom/webidl/moz.build
 @@ -784,6 +784,7 @@ WEBIDL_FILES = [
