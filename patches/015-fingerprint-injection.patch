@@ -16,7 +16,7 @@ index b74fdb90cc..6e2af15d2b 100644
 @@ -11,6 +11,7 @@
   */
  
-#include "mozilla/dom/Element.h"
+ #include "mozilla/dom/Element.h"
 +#include "MaskConfig.hpp"
  
  #include <inttypes.h>

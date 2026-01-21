@@ -20,7 +20,7 @@ from typing import Any, Dict
 # Paths
 SCRIPT_DIR = Path(__file__).parent.absolute()
 PROJECT_ROOT = SCRIPT_DIR.parent
-DETECTOR_JS = SCRIPT_DIR / "fp-detector.js"
+DETECTOR_JS = PROJECT_ROOT / "services" / "browser-info-generator.js"  # Use browser-info-generator
 OUTPUT_DIR = PROJECT_ROOT / ".planning" / "fp"
 COMPARISON_FILE = OUTPUT_DIR / "comparison.json"
 
@@ -28,7 +28,7 @@ COMPARISON_FILE = OUTPUT_DIR / "comparison.json"
 DEFAULT_CAMOUFOX_EXEC = PROJECT_ROOT / "dist" / "Camoufox.app" / "Contents" / "MacOS" / "camoufox"
 
 # Safari iOS config to spoof
-SAFARI_CONFIG = {
+SAFARI_IOS_CONFIG = {
     "navigator.userAgent": "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.1 Mobile/15E148 Safari/604.1",
     "navigator.appCodeName": "Mozilla",
     "navigator.appName": "Netscape",
@@ -42,10 +42,89 @@ SAFARI_CONFIG = {
     "navigator.vendorSub": "",
     "navigator.webdriver": False,
     "navigator.userAgentData": False,
+    # Hide Firefox-specific navigator properties
+    "navigator.buildID:hide": True,
+    "navigator.oscpu:hide": True,
+    "navigator.doNotTrack:hide": True,
+    "navigator.globalPrivacyControl:hide": True,
+    "navigator.getBattery:hide": True,
+    "navigator.connection:hide": True,
     "window.InstallTrigger:hide": True,
-    "window.webkit": True,
+    "window.webkit": True,  # iOS Safari has window.webkit
     "window.devicePixelRatio": 3,
 }
+
+# Safari macOS config to spoof (for --use-webkit mode)
+SAFARI_MACOS_CONFIG = {
+    # Navigator properties
+    "navigator.userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.1 Safari/605.1.15",
+    "navigator.appCodeName": "Mozilla",
+    "navigator.appName": "Netscape",
+    "navigator.appVersion": "5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.1 Safari/605.1.15",
+    "navigator.language": "en-US",
+    "navigator.platform": "MacIntel",
+    "navigator.product": "Gecko",
+    "navigator.productSub": "20030107",
+    "navigator.languages": ["en-US"],
+    "navigator.vendor": "Apple Computer, Inc.",
+    "navigator.vendorSub": "",
+    "navigator.webdriver": False,
+
+    # Firefox-specific APIs to HIDE (Safari doesn't have these)
+    "navigator.buildID:hide": True,
+    "navigator.oscpu:hide": True,
+    "navigator.doNotTrack:hide": True,
+    "navigator.globalPrivacyControl:hide": True,
+    "navigator.getBattery:hide": True,
+    "navigator.connection:hide": True,
+
+    # Chrome-specific APIs to HIDE
+    "navigator.userAgentData": False,
+    "window.chrome": False,
+    "performance.memory": False,
+
+    # Firefox-specific APIs to HIDE
+    "window.InstallTrigger:hide": True,
+
+    # Safari-specific APIs - macOS Safari does NOT expose window.webkit (only iOS does)
+    "window.webkit": False,
+    # macOS Safari has a window.safari object for push notifications
+    "window.safari": True,
+    # Safari exposes TouchEvent constructor even on non-touch devices
+    "window.TouchEvent": True,
+    # Safari doesn't expose SharedArrayBuffer in certain configurations
+    "window.SharedArrayBuffer:hide": True,
+
+    # WebGL spoofing for Safari
+    "webGl:vendor": "Apple Inc.",
+    "webGl:renderer": "Apple GPU",
+
+    # Display
+    "window.devicePixelRatio": 2,
+
+    # macOS Safari voices (Apple TTS)
+    "voices": [
+        {"lang": "en-US", "name": "Samantha", "voiceUri": "com.apple.voice.compact.en-US.Samantha", "isDefault": True, "isLocalService": True},
+        {"lang": "en-US", "name": "Alex", "voiceUri": "com.apple.speech.synthesis.voice.Alex", "isDefault": True, "isLocalService": True},
+        {"lang": "en-US", "name": "Fred", "voiceUri": "com.apple.speech.synthesis.voice.Fred", "isDefault": True, "isLocalService": True},
+        {"lang": "en-GB", "name": "Daniel", "voiceUri": "com.apple.voice.compact.en-GB.Daniel", "isDefault": True, "isLocalService": True},
+        {"lang": "en-AU", "name": "Karen", "voiceUri": "com.apple.voice.compact.en-AU.Karen", "isDefault": True, "isLocalService": True},
+        {"lang": "de-DE", "name": "Anna", "voiceUri": "com.apple.voice.compact.de-DE.Anna", "isDefault": True, "isLocalService": True},
+        {"lang": "es-ES", "name": "Monica", "voiceUri": "com.apple.voice.compact.es-ES.Monica", "isDefault": True, "isLocalService": True},
+        {"lang": "fr-FR", "name": "Thomas", "voiceUri": "com.apple.voice.compact.fr-FR.Thomas", "isDefault": True, "isLocalService": True},
+        {"lang": "it-IT", "name": "Alice", "voiceUri": "com.apple.voice.compact.it-IT.Alice", "isDefault": True, "isLocalService": True},
+        {"lang": "ja-JP", "name": "Kyoko", "voiceUri": "com.apple.voice.compact.ja-JP.Kyoko", "isDefault": True, "isLocalService": True},
+        {"lang": "ko-KR", "name": "Yuna", "voiceUri": "com.apple.voice.compact.ko-KR.Yuna", "isDefault": True, "isLocalService": True},
+        {"lang": "zh-CN", "name": "Tingting", "voiceUri": "com.apple.voice.compact.zh-CN.Tingting", "isDefault": True, "isLocalService": True},
+        {"lang": "pt-BR", "name": "Luciana", "voiceUri": "com.apple.voice.compact.pt-BR.Luciana", "isDefault": True, "isLocalService": True},
+        {"lang": "ru-RU", "name": "Milena", "voiceUri": "com.apple.voice.compact.ru-RU.Milena", "isDefault": True, "isLocalService": True},
+        {"lang": "nl-NL", "name": "Xander", "voiceUri": "com.apple.voice.compact.nl-NL.Xander", "isDefault": True, "isLocalService": True},
+    ],
+    "voices:blockIfNotDefined": True,
+}
+
+# Default config (iOS Safari)
+SAFARI_CONFIG = SAFARI_IOS_CONFIG
 
 
 def load_detector_js() -> str:
@@ -57,11 +136,210 @@ def load_detector_js() -> str:
 
 def run_detector_in_browser(page, detector_js: str) -> Dict[str, Any]:
     """Inject detector JS and run it in the browser."""
-    # Inject the detector
+    # Inject the browser-info-generator
     page.evaluate(detector_js)
 
-    # Run detection
-    result = page.evaluate("window.__fpDetector.detectAll()")
+    # Wait for async operations to complete
+    import time
+    time.sleep(2)  # Give time for async voice loading etc.
+
+    # Collect fingerprint data using YandexBrowserInfo API
+    result = page.evaluate("""
+        (async () => {
+            const browser = new window.YandexBrowserInfo.BrowserDetector(window);
+            const collector = new window.YandexBrowserInfo.FingerprintCollector(window);
+
+            // Collect synchronous data
+            const params = {};
+
+            // Navigator properties
+            params['navigator.userAgent'] = navigator.userAgent;
+            params['navigator.appCodeName'] = navigator.appCodeName;
+            params['navigator.appName'] = navigator.appName;
+            params['navigator.appVersion'] = navigator.appVersion;
+            params['navigator.language'] = navigator.language;
+            params['navigator.languages'] = Array.from(navigator.languages || []);
+            params['navigator.platform'] = navigator.platform;
+            params['navigator.product'] = navigator.product;
+            params['navigator.productSub'] = navigator.productSub;
+            params['navigator.vendor'] = navigator.vendor;
+            params['navigator.vendorSub'] = navigator.vendorSub;
+            params['navigator.hardwareConcurrency'] = navigator.hardwareConcurrency;
+            params['navigator.maxTouchPoints'] = navigator.maxTouchPoints;
+            params['navigator.cookieEnabled'] = navigator.cookieEnabled;
+            params['navigator.webdriver'] = navigator.webdriver;
+            params['navigator.buildID'] = navigator.buildID;
+            params['navigator.oscpu'] = navigator.oscpu;
+            params['navigator.doNotTrack'] = navigator.doNotTrack;
+            params['navigator.globalPrivacyControl'] = navigator.globalPrivacyControl;
+            params['navigator.pdfViewerEnabled'] = navigator.pdfViewerEnabled;
+
+            // Screen properties
+            params['screen.width'] = screen.width;
+            params['screen.height'] = screen.height;
+            params['screen.availWidth'] = screen.availWidth;
+            params['screen.availHeight'] = screen.availHeight;
+            params['screen.availLeft'] = screen.availLeft;
+            params['screen.availTop'] = screen.availTop;
+            params['screen.colorDepth'] = screen.colorDepth;
+            params['screen.pixelDepth'] = screen.pixelDepth;
+
+            // Window properties
+            params['window.innerWidth'] = window.innerWidth;
+            params['window.innerHeight'] = window.innerHeight;
+            params['window.outerWidth'] = window.outerWidth;
+            params['window.outerHeight'] = window.outerHeight;
+            params['window.screenX'] = window.screenX;
+            params['window.screenY'] = window.screenY;
+            params['window.devicePixelRatio'] = window.devicePixelRatio;
+
+            // Browser-specific APIs
+            params['window.InstallTrigger'] = typeof window.InstallTrigger !== 'undefined';
+            params['window.chrome'] = typeof window.chrome !== 'undefined' && window.chrome !== null;
+            params['window.webkit'] = typeof window.webkit !== 'undefined' && window.webkit !== null;
+            params['window.safari'] = typeof window.safari !== 'undefined' && window.safari !== null;
+
+            // Touch APIs
+            params['touch.maxTouchPoints'] = navigator.maxTouchPoints || 0;
+            params['touch.ontouchstart'] = 'ontouchstart' in window;
+            params['touch.TouchEvent'] = typeof TouchEvent !== 'undefined';
+
+            // SharedArrayBuffer
+            params['hasSharedArrayBuffer'] = typeof SharedArrayBuffer !== 'undefined';
+
+            // Plugins
+            params['plugins.count'] = navigator.plugins ? navigator.plugins.length : 0;
+            params['plugins.list'] = [];
+            if (navigator.plugins) {
+                for (let i = 0; i < Math.min(navigator.plugins.length, 10); i++) {
+                    const p = navigator.plugins[i];
+                    params['plugins.list'].push({
+                        name: p.name,
+                        description: p.description,
+                        filename: p.filename
+                    });
+                }
+            }
+
+            // WebGL
+            try {
+                const canvas = document.createElement('canvas');
+                const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+                if (gl) {
+                    params['webgl.vendor'] = gl.getParameter(gl.VENDOR);
+                    params['webgl.renderer'] = gl.getParameter(gl.RENDERER);
+                    params['webgl.version'] = gl.getParameter(gl.VERSION);
+                    params['webgl.shadingLanguageVersion'] = gl.getParameter(gl.SHADING_LANGUAGE_VERSION);
+                    params['webgl.maxTextureSize'] = gl.getParameter(gl.MAX_TEXTURE_SIZE);
+                    params['webgl.maxRenderbufferSize'] = gl.getParameter(gl.MAX_RENDERBUFFER_SIZE);
+
+                    const debugInfo = gl.getExtension('WEBGL_debug_renderer_info');
+                    if (debugInfo) {
+                        params['webgl.unmaskedVendor'] = gl.getParameter(debugInfo.UNMASKED_VENDOR_WEBGL);
+                        params['webgl.unmaskedRenderer'] = gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL);
+                    }
+
+                    const extensions = gl.getSupportedExtensions();
+                    params['webgl.extensions'] = extensions ? extensions.sort() : [];
+                    params['webgl.extensionsCount'] = extensions ? extensions.length : 0;
+                }
+            } catch (e) {}
+
+            // Media queries
+            params['mediaQuery.prefersColorSchemeDark'] = window.matchMedia('(prefers-color-scheme: dark)').matches;
+            params['mediaQuery.prefersColorSchemeLight'] = window.matchMedia('(prefers-color-scheme: light)').matches;
+            params['mediaQuery.prefersReducedMotion'] = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+            params['mediaQuery.hoverHover'] = window.matchMedia('(hover: hover)').matches;
+            params['mediaQuery.hoverNone'] = window.matchMedia('(hover: none)').matches;
+            params['mediaQuery.pointerFine'] = window.matchMedia('(pointer: fine)').matches;
+            params['mediaQuery.pointerCoarse'] = window.matchMedia('(pointer: coarse)').matches;
+            params['mediaQuery.anyHoverHover'] = window.matchMedia('(any-hover: hover)').matches;
+            params['mediaQuery.anyHoverNone'] = window.matchMedia('(any-hover: none)').matches;
+            params['mediaQuery.anyPointerFine'] = window.matchMedia('(any-pointer: fine)').matches;
+            params['mediaQuery.anyPointerCoarse'] = window.matchMedia('(any-pointer: coarse)').matches;
+
+            // Timezone
+            params['date.timezoneOffset'] = new Date().getTimezoneOffset();
+
+            // Performance memory
+            params['performance.memory.jsHeapSizeLimit'] = performance.memory ? performance.memory.jsHeapSizeLimit : null;
+
+            // Voices (async)
+            try {
+                const synthesis = window.speechSynthesis;
+                if (synthesis && synthesis.getVoices) {
+                    // Try immediate
+                    let voices = synthesis.getVoices();
+                    if (!voices || voices.length === 0) {
+                        // Wait for voiceschanged
+                        await new Promise((resolve) => {
+                            const onVoicesChanged = () => {
+                                synthesis.removeEventListener('voiceschanged', onVoicesChanged);
+                                resolve();
+                            };
+                            synthesis.addEventListener('voiceschanged', onVoicesChanged);
+                            setTimeout(resolve, 1500);
+                        });
+                        voices = synthesis.getVoices();
+                    }
+                    params['voices.count'] = voices ? voices.length : 0;
+                    params['voices.list'] = voices ? voices.map(v => ({
+                        name: v.name,
+                        lang: v.lang,
+                        localService: v.localService,
+                        voiceURI: v.voiceURI,
+                        default: v.default
+                    })) : [];
+                }
+            } catch (e) {}
+
+            // Sync fingerprints
+            const syncFP = {
+                canvas: collector.getCanvasFingerprint(),
+                audio: collector.getAudioFingerprint(),
+                fonts: collector.getFontFingerprint(),
+                plugins: collector.getPluginFingerprint(),
+                navigator: collector.getNavigatorFingerprint(),
+                voices: collector.getSpeechVoicesFingerprint(),
+                touch: collector.getTouchFingerprint(),
+                mediaQueries: collector.getMediaQueriesFingerprint(),
+                gamepad: collector.getGamepadFingerprint(),
+                mediaCodec: collector.getMediaCodecFingerprint(),
+                jsHeapLimit: collector.getJsHeapSizeLimitFingerprint(),
+                screenAvailable: collector.getScreenAvailableFingerprint(),
+                doNotTrack: collector.getDoNotTrackFingerprint(),
+                webgl: collector.getWebGLFingerprint(),
+                fullFingerprint: collector.generateFullFingerprint(),
+                fingerprintHash: collector.generateFingerprintHash()
+            };
+
+            // Async fingerprints
+            const asyncFP = await window.YandexBrowserInfo.getAsyncDetection();
+
+            // Platform APIs
+            const platformAPIs = browser.getPlatformAPIs();
+
+            // Flatten all params into config format expected by comparison
+            const config = {...params};
+
+            // Add platform APIs to config
+            for (const [key, value] of Object.entries(platformAPIs)) {
+                config['platform.' + key] = value;
+            }
+
+            return {
+                config: config,
+                unavailable: [],
+                errors: [],
+                raw: {
+                    params: params,
+                    sync: syncFP,
+                    async: asyncFP,
+                    platform: platformAPIs
+                }
+            };
+        })()
+    """)
     return result
 
 
@@ -85,10 +363,11 @@ def get_spoofed_fingerprint(
         executable_path=exec_path,
         ff_version=144,
         exclude_addons=[DefaultAddons.UBO],
-        os="ios",
+        os="macos",
         debug=False,
         config=config,
         headless=headless,
+        i_know_what_im_doing=True,
     ) as browser:
         page = browser.new_page()
         page.goto("about:blank")
@@ -391,9 +670,13 @@ def main():
     # Collect spoofed fingerprint
     if not args.real_only:
         print("\n[2/2] Collecting SPOOFED Camoufox fingerprint...")
+        # Use macOS config for webkit mode, iOS config otherwise
+        spoof_config = SAFARI_MACOS_CONFIG if args.use_webkit else SAFARI_IOS_CONFIG
+        print(f"  Using {'macOS' if args.use_webkit else 'iOS'} Safari config")
         try:
             spoofed_result = get_spoofed_fingerprint(
                 exec_path=args.exec_path,
+                config=spoof_config,
                 headless=headless
             )
             print(f"  Collected {len(spoofed_result.get('config', {}))} properties")

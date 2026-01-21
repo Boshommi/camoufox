@@ -1321,6 +1321,79 @@
         }
       });
     }
+
+    // Speech Voices - async with voiceschanged event
+    // Voices may not be available immediately due to IPC in content processes
+    getSpeechVoicesAsync() {
+      return new Promise((resolve) => {
+        try {
+          const synthesis = this.win.speechSynthesis;
+          if (!synthesis || !synthesis.getVoices) {
+            return resolve({ count: 0, list: [] });
+          }
+
+          // Try to get voices immediately
+          let voices = synthesis.getVoices();
+          if (voices && voices.length > 0) {
+            return resolve({
+              count: voices.length,
+              list: voices.map((v) => ({
+                name: v.name,
+                lang: v.lang,
+                localService: v.localService,
+                voiceURI: v.voiceURI,
+                default: v.default,
+              })),
+            });
+          }
+
+          // If no voices yet, wait for voiceschanged event
+          let resolved = false;
+          const onVoicesChanged = () => {
+            if (resolved) return;
+            resolved = true;
+            synthesis.removeEventListener("voiceschanged", onVoicesChanged);
+            const newVoices = synthesis.getVoices();
+            resolve({
+              count: newVoices ? newVoices.length : 0,
+              list: newVoices
+                ? newVoices.map((v) => ({
+                    name: v.name,
+                    lang: v.lang,
+                    localService: v.localService,
+                    voiceURI: v.voiceURI,
+                    default: v.default,
+                  }))
+                : [],
+            });
+          };
+
+          synthesis.addEventListener("voiceschanged", onVoicesChanged);
+
+          // Timeout fallback (2 seconds)
+          setTimeout(() => {
+            if (resolved) return;
+            resolved = true;
+            synthesis.removeEventListener("voiceschanged", onVoicesChanged);
+            const fallbackVoices = synthesis.getVoices();
+            resolve({
+              count: fallbackVoices ? fallbackVoices.length : 0,
+              list: fallbackVoices
+                ? fallbackVoices.map((v) => ({
+                    name: v.name,
+                    lang: v.lang,
+                    localService: v.localService,
+                    voiceURI: v.voiceURI,
+                    default: v.default,
+                  }))
+                : [],
+            });
+          }, 2000);
+        } catch (e) {
+          resolve({ count: 0, list: [], error: e.message });
+        }
+      });
+    }
   }
 
   // ============================================================
@@ -3204,17 +3277,19 @@
     // New async detection methods
     getAsyncDetection: async function () {
       const browser = new BrowserDetector(window);
-      const [clientHints, webRTCIP, webOSInfo, cookieLabel] = await Promise.all([
-        browser.getUserAgentClientHints(),
-        browser.getWebRTCLocalIP(),
-        browser.getWebOSInfo(),
-        browser.getCookieDeprecationLabel(),
+      const [clientHints, webRTCIP, webOSInfo, cookieLabel, voices] = await Promise.all([
+        browser.getUserAgentClientHints().catch(() => null),
+        browser.getWebRTCLocalIP().catch(() => null),
+        browser.getWebOSInfo().catch(() => null),
+        browser.getCookieDeprecationLabel().catch(() => null),
+        browser.getSpeechVoicesAsync().catch(() => ({ count: 0, list: [] })),
       ]);
       return {
         userAgentClientHints: clientHints,
         webRTCLocalIP: webRTCIP,
         webOSInfo: webOSInfo,
         cookieDeprecationLabel: cookieLabel,
+        voices: voices,
       };
     },
   };
