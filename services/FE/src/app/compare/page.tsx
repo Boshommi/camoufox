@@ -1,10 +1,11 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { api } from "~/trpc/react";
+import { collectAll, type CollectionResult } from "~/lib/fingerprint-collector";
 import {
-  collectBrowserInfoFingerprints,
-  type BrowserInfoResult,
+  murmurhash3_32,
+  type BrowserInfoComponent,
 } from "~/lib/browser-info-detector";
 
 // Decompress gzip data and return raw bytes
@@ -55,7 +56,7 @@ interface CanvasPreview {
 }
 
 export default function ComparePage() {
-  const [browserInfo, setBrowserInfo] = useState<BrowserInfoResult | null>(null);
+  const [collectionResult, setCollectionResult] = useState<CollectionResult | null>(null);
   const [canvasPreviews, setCanvasPreviews] = useState<CanvasPreview[]>([]);
   const [isCollecting, setIsCollecting] = useState(true);
 
@@ -63,11 +64,53 @@ export default function ComparePage() {
 
   const { data: existingCanvasFingerprints } = api.canvas.list.useQuery();
 
-  // Collect browser info fingerprints on mount
+  // Collect browser info fingerprints on mount (async for proper voice collection)
   useEffect(() => {
-    const info = collectBrowserInfoFingerprints();
-    setBrowserInfo(info);
+    const collect = async () => {
+      try {
+        const result = await collectAll();
+        setCollectionResult(result);
+      } catch (error) {
+        console.error("Failed to collect fingerprints:", error);
+      }
+    };
+    void collect();
   }, []);
+
+  // Convert fingerprintComponents to display format
+  const browserInfo = useMemo(() => {
+    if (!collectionResult) return null;
+
+    const fp = collectionResult.fingerprintComponents;
+    const asyncData = collectionResult.asyncData;
+
+    // Helper to hash raw fingerprint values (fingerprintComponents contains raw strings, not hashes)
+    const hash = (raw: string) => raw ? murmurhash3_32(raw).toString(36) : "";
+
+    // Map component raw values to BrowserInfoComponent format with hashes
+    const components: BrowserInfoComponent[] = [
+      { name: "Canvas", hash: hash(fp.canvas), rawValue: fp.canvas?.slice(0, 50) + "..." },
+      { name: "Plugins", hash: hash(fp.plugins), rawValue: fp.plugins?.slice(0, 50) + "..." },
+      { name: "Navigator", hash: hash(fp.navigator), rawValue: fp.navigator?.slice(0, 50) + "..." },
+      { name: "Gamepad", hash: hash(fp.gamepads), rawValue: fp.gamepads },
+      { name: "Fonts", hash: hash(fp.fonts), rawValue: `${fp.fonts?.split("1").length - 1} fonts detected` },
+      { name: "Audio", hash: hash(fp.audio), rawValue: fp.audio },
+      { name: "WebGL", hash: hash(fp.webgl), rawValue: fp.webgl?.slice(0, 50) + "..." },
+      { name: "Voices", hash: hash(asyncData?.voices?.list?.map(v => `${v.name},${v.lang},${v.localService},${v.voiceURI},${v.default}`).join("|") ?? ""), rawValue: `${asyncData?.voices?.list?.length ?? 0} voices` },
+      { name: "Touch", hash: hash(fp.touch), rawValue: fp.touch },
+      { name: "MediaQueries", hash: hash(fp.mediaQueries), rawValue: fp.mediaQueries },
+      { name: "MediaCodecs", hash: hash(fp.mediaCodecs), rawValue: fp.mediaCodecs?.slice(0, 50) + "..." },
+      { name: "JsHeap", hash: hash(fp.jsHeapSizeLimit), rawValue: fp.jsHeapSizeLimit },
+      { name: "ScreenAvail", hash: hash(fp.screenAvailable), rawValue: fp.screenAvailable },
+      { name: "DNT", hash: hash(fp.doNotTrack), rawValue: fp.doNotTrack },
+    ];
+
+    // Calculate combined hash
+    const combinedValue = components.map(c => c.hash).join("-");
+    const combinedHash = murmurhash3_32(combinedValue).toString(36);
+
+    return { components, combinedHash };
+  }, [collectionResult]);
 
   // Render canvas fingerprints
   useEffect(() => {
@@ -140,13 +183,14 @@ export default function ComparePage() {
                 Browser Info Components (14)
               </h2>
               <p className="text-sm text-gray-400 mb-4">
-                Combined hash: <code className="bg-gray-800 px-2 py-1 rounded">{browserInfo?.combinedHash}</code>
+                Combined hash: <code data-testid="combined-hash" className="bg-gray-800 px-2 py-1 rounded">{browserInfo?.combinedHash}</code>
               </p>
 
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
                 {browserInfo?.components.map((component, index) => (
                   <div
                     key={component.name}
+                    data-testid={`component-${component.name.toLowerCase()}`}
                     className="bg-gray-800 rounded-lg p-4"
                   >
                     <div className="flex items-center justify-between mb-2">
@@ -154,7 +198,7 @@ export default function ComparePage() {
                         {index + 1}. {component.name}
                       </span>
                       {component.hash ? (
-                        <code className="text-xs bg-green-900/50 text-green-400 px-2 py-0.5 rounded">
+                        <code data-testid={`hash-${component.name.toLowerCase()}`} className="text-xs bg-green-900/50 text-green-400 px-2 py-0.5 rounded">
                           {component.hash}
                         </code>
                       ) : (
@@ -163,7 +207,7 @@ export default function ComparePage() {
                         </span>
                       )}
                     </div>
-                    <p className="text-xs text-gray-500 break-all font-mono">
+                    <p data-testid={`raw-${component.name.toLowerCase()}`} className="text-xs text-gray-500 break-all font-mono">
                       {component.rawValue || "—"}
                     </p>
                   </div>
@@ -227,6 +271,15 @@ export default function ComparePage() {
                 </div>
               )}
             </section>
+
+            {/* Raw JSON data for automated extraction */}
+            <script
+              id="fingerprint-data"
+              type="application/json"
+              dangerouslySetInnerHTML={{
+                __html: JSON.stringify(collectionResult),
+              }}
+            />
 
             {/* Quick Reference */}
             <section>

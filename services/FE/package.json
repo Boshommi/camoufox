@@ -10,7 +10,7 @@
     "db:migrate": "bun --bun scripts/db-migrate.ts",
     "db:push": "prisma db push",
     "db:studio": "prisma studio",
-    "dev": "bun --bun next dev --turbo",
+    "dev": "bun --bun next dev --turbo --port 3300",
     "format:check": "prettier --check \"**/*.{ts,tsx,js,jsx,mdx}\" --cache",
     "format:write": "prettier --write \"**/*.{ts,tsx,js,jsx,mdx}\" --cache",
     "postinstall": "prisma generate",

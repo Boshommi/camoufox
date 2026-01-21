@@ -78,7 +78,7 @@ const MEDIA_CODECS = [
 ];
 
 // MurmurHash3 32-bit implementation
-function murmurhash3_32(key: string, seed = 0): number {
+export function murmurhash3_32(key: string, seed = 0): number {
   let h1 = seed;
   const c1 = 0xcc9e2d51;
   const c2 = 0x1b873593;

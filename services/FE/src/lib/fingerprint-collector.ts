@@ -269,9 +269,9 @@ function convertToCamoufoxConfig(
     config["voices"] = asyncData.voices.list.map((v) => ({
       name: v.name,
       lang: v.lang,
-      uri: v.voiceURI,
+      voiceUri: v.voiceURI,
       isDefault: v.default,
-      isLocal: v.localService,
+      isLocalService: v.localService,
     }));
   } else if (window.speechSynthesis) {
     const voices = window.speechSynthesis.getVoices();
@@ -279,9 +279,9 @@ function convertToCamoufoxConfig(
       config["voices"] = voices.map((v) => ({
         name: v.name,
         lang: v.lang,
-        uri: v.voiceURI,
+        voiceUri: v.voiceURI,
         isDefault: v.default,
-        isLocal: v.localService,
+        isLocalService: v.localService,
       }));
     }
   }

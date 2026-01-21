@@ -3,26 +3,27 @@
 Fingerprint Comparison Script for Camoufox
 
 Compares fingerprints between:
-1. Real iOS Safari (via iOS Simulator + Appium) or Playwright WebKit
-2. Spoofed Camoufox (via Playwright Firefox driver)
+1. Real Safari-like browser (Playwright WebKit)
+2. Spoofed Camoufox
 
-Key feature: DYNAMIC CONFIG GENERATION
-By default, this script collects fingerprint from real Safari and dynamically
-generates a Camoufox config from that data. This ensures the spoofed browser
-always matches what the real browser reports, without manual maintenance.
+Collects fingerprints via the FE service at localhost:3300/compare.
+
+Prerequisites:
+    # Start the FE service first
+    cd services/FE && bun run dev
 
 Usage:
-    # Default: dynamic config from real Safari
-    python3 scripts/fp-compare.py --use-webkit --headful
+    # Compare WebKit vs Camoufox (headless)
+    python3 scripts/fp-compare.py
 
-    # With config file output for inspection
-    python3 scripts/fp-compare.py --use-webkit --headful --save-config /tmp/config.json
-
-    # Use static hardcoded config instead
-    python3 scripts/fp-compare.py --use-webkit --headful --static-config
+    # Run in headful mode to see browsers
+    python3 scripts/fp-compare.py --headful
 
     # Just collect real fingerprint
-    python3 scripts/fp-compare.py --real-only --use-webkit
+    python3 scripts/fp-compare.py --real-only
+
+    # Just collect spoofed fingerprint
+    python3 scripts/fp-compare.py --spoofed-only
 """
 
 import argparse
@@ -41,6 +42,9 @@ COMPARISON_FILE = OUTPUT_DIR / "comparison.json"
 
 # Default Camoufox executable path
 DEFAULT_CAMOUFOX_EXEC = PROJECT_ROOT / "dist" / "Camoufox.app" / "Contents" / "MacOS" / "camoufox"
+
+# FE service URL for fingerprint collection
+FE_URL = "http://localhost:3300/compare"
 
 # Safari iOS config to spoof (iPhone 15 Pro, iOS 18.3)
 SAFARI_IOS_CONFIG = {
@@ -322,6 +326,10 @@ def convert_fingerprint_to_config(fingerprint_result: Dict[str, Any]) -> Dict[st
         webgl_params['35724'] = fp['webgl.shadingLanguageVersion']  # SHADING_LANGUAGE_VERSION
     if fp.get('webgl.version'):
         webgl_params['7938'] = fp['webgl.version']  # GL_VERSION
+    if fp.get('webgl.maxTextureSize'):
+        webgl_params['3379'] = fp['webgl.maxTextureSize']  # MAX_TEXTURE_SIZE
+    if fp.get('webgl.maxRenderbufferSize'):
+        webgl_params['34024'] = fp['webgl.maxRenderbufferSize']  # MAX_RENDERBUFFER_SIZE
 
     if webgl_params:
         config['webGl:parameters'] = webgl_params
@@ -401,9 +409,9 @@ def convert_fingerprint_to_config(fingerprint_result: Dict[str, Any]) -> Dict[st
             {
                 'name': v.get('name', ''),
                 'lang': v.get('lang', ''),
-                'uri': v.get('voiceURI', ''),
+                'voiceUri': v.get('voiceURI', ''),
                 'isDefault': v.get('default', False),
-                'isLocal': v.get('localService', True),
+                'isLocalService': v.get('localService', True),
             }
             for v in voices_list
         ]
@@ -420,6 +428,14 @@ def convert_fingerprint_to_config(fingerprint_result: Dict[str, Any]) -> Dict[st
     # Check if the real browser has userAgentData
     has_uad = fp.get('async.userAgentClientHints') is not None
     config['navigator.userAgentData'] = has_uad
+
+    # ============================================
+    # 12. WebRTC Local IP (Safari uses mDNS obfuscation)
+    # ============================================
+    # Safari returns "0.0.0.0" due to mDNS obfuscation
+    webrtc_ip = fp.get('async.webRTCLocalIP')
+    if webrtc_ip == '0.0.0.0':
+        config['webrtc:localipv4'] = '0.0.0.0'
 
     return config
 
@@ -636,6 +652,17 @@ def run_detector_in_browser(page, detector_js: str) -> Dict[str, Any]:
             // Flatten all params into config format expected by comparison
             const config = {...params};
 
+            // Add async results to config
+            if (asyncFP.webRTCLocalIP) {
+                config['async.webRTCLocalIP'] = asyncFP.webRTCLocalIP;
+            }
+            if (asyncFP.userAgentClientHints) {
+                config['async.userAgentClientHints'] = asyncFP.userAgentClientHints;
+            }
+            if (asyncFP.cookieDeprecationLabel) {
+                config['async.cookieDeprecationLabel'] = asyncFP.cookieDeprecationLabel;
+            }
+
             // Add platform APIs to config
             for (const [key, value] of Object.entries(platformAPIs)) {
                 config['platform.' + key] = value;
@@ -655,6 +682,78 @@ def run_detector_in_browser(page, detector_js: str) -> Dict[str, Any]:
         })()
     """)
     return result
+
+
+def get_fingerprint_from_fe(page, wait_timeout: int = 30000) -> Dict[str, Any]:
+    """
+    Extract fingerprint data from FE Compare page.
+
+    The FE page collects fingerprints and exposes them via a JSON script tag.
+    This is much simpler than injecting detector JS manually.
+
+    Args:
+        page: Playwright page object
+        wait_timeout: Timeout in ms for waiting for fingerprint data
+
+    Returns:
+        The fingerprint collection result from the FE page
+    """
+    print(f"  Navigating to {FE_URL}...")
+    page.goto(FE_URL, wait_until="networkidle")
+
+    print("  Waiting for fingerprint data...")
+    # Wait for the fingerprint-data script tag to appear (state="attached" since script tags are never visible)
+    page.wait_for_selector("#fingerprint-data", timeout=wait_timeout, state="attached")
+
+    # Give a bit more time for async data (voices, etc.) to be collected
+    time.sleep(2)
+
+    # Extract the JSON data from the script tag
+    data = page.evaluate("""
+        () => {
+            const el = document.getElementById('fingerprint-data');
+            if (!el) return null;
+            try {
+                return JSON.parse(el.textContent);
+            } catch (e) {
+                return { error: e.toString() };
+            }
+        }
+    """)
+
+    if not data:
+        raise RuntimeError("Failed to extract fingerprint data from FE page")
+
+    if 'error' in data:
+        raise RuntimeError(f"FE page returned error: {data['error']}")
+
+    # FE returns CollectionResult: { config, fingerprintComponents, asyncData, browserInfo, ... }
+    # The 'config' is already a full Camoufox config generated by convertToCamoufoxConfig()
+
+    # Use the pre-generated config from FE (this is the valid Camoufox config)
+    config = dict(data.get('config', {}))
+
+    # Add fingerprint component raw values for COMPARISON ONLY (prefixed to distinguish)
+    fp = data.get('fingerprintComponents', {})
+    for key, value in fp.items():
+        if value:
+            config[f'component.{key}.rawValue'] = value
+
+    # Add async data for COMPARISON ONLY (prefixed to distinguish)
+    async_data = data.get('asyncData', {})
+    if async_data:
+        if async_data.get('voices'):
+            config['comparison.voices.count'] = async_data['voices'].get('count', 0)
+            config['comparison.voices.list'] = async_data['voices'].get('list', [])
+        if async_data.get('webRTCLocalIP'):
+            config['comparison.webRTCLocalIP'] = async_data['webRTCLocalIP']
+
+    return {
+        'config': config,
+        'raw': data,
+        'unavailable': data.get('unavailable', []),
+        'errors': []
+    }
 
 
 def get_spoofed_fingerprint(
@@ -692,6 +791,17 @@ def get_spoofed_fingerprint(
     print(f"  webGl:vendor = {config.get('webGl:vendor')}")
     print(f"  webGl:renderer = {config.get('webGl:renderer')}")
 
+    # Build Firefox user prefs based on config
+    firefox_prefs = {}
+    if config.get('window.SharedArrayBuffer:hide'):
+        # Disable shared memory to hide SharedArrayBuffer global
+        firefox_prefs['javascript.options.shared_memory'] = False
+
+    # Enable WebRTC local IP spoofing by disabling ice.no_host
+    # This allows host candidates to be generated (which will then be spoofed)
+    if config.get('webrtc:localipv4') or config.get('webrtc:localipv6'):
+        firefox_prefs['media.peerconnection.ice.no_host'] = False
+
     with Camoufox(
         executable_path=exec_path,
         ff_version=144,
@@ -701,6 +811,7 @@ def get_spoofed_fingerprint(
         config=config,
         headless=headless,
         i_know_what_im_doing=True,
+        firefox_user_prefs=firefox_prefs,
     ) as browser:
         page = browser.new_page()
         page.goto("about:blank")
@@ -1327,6 +1438,26 @@ def get_real_webkit_fingerprint(headless: bool = True) -> Dict[str, Any]:
     return result
 
 
+def normalize_voices(voices_list):
+    """Deduplicate voices by voiceURI and normalize for comparison.
+
+    The 'default' field is excluded from comparison because:
+    - Safari marks many voices as default=true for each language
+    - Firefox only allows one default voice per language
+    - This is not a fingerprinting concern, just a hint for applications
+    """
+    seen = set()
+    result = []
+    for v in voices_list:
+        uri = v.get('voiceURI') or v.get('voiceUri') or ''
+        if uri and uri not in seen:
+            seen.add(uri)
+            # Normalize: remove 'default' field for comparison
+            normalized = {k: v_val for k, v_val in v.items() if k != 'default'}
+            result.append(normalized)
+    return sorted(result, key=lambda x: x.get('voiceURI', x.get('voiceUri', '')))
+
+
 def compare_fingerprints(
     real: Dict[str, Any],
     spoofed: Dict[str, Any]
@@ -1350,6 +1481,17 @@ def compare_fingerprints(
         if in_real and in_spoofed:
             real_val = real_config[key]
             spoofed_val = spoofed_config[key]
+
+            # Special handling for voices - deduplicate by URI before comparing
+            if key == 'voices.list':
+                real_val = normalize_voices(real_val) if isinstance(real_val, list) else real_val
+                spoofed_val = normalize_voices(spoofed_val) if isinstance(spoofed_val, list) else spoofed_val
+            elif key == 'voices.count':
+                # Use unique count from voices.list
+                real_voices = real_config.get('voices.list', [])
+                spoofed_voices = spoofed_config.get('voices.list', [])
+                real_val = len(normalize_voices(real_voices)) if isinstance(real_voices, list) else real_val
+                spoofed_val = len(normalize_voices(spoofed_voices)) if isinstance(spoofed_voices, list) else spoofed_val
 
             if real_val == spoofed_val:
                 matches.append({
@@ -1547,7 +1689,7 @@ def print_summary(comparison: Dict[str, Any]):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Compare fingerprints between real Safari and spoofed Camoufox"
+        description="Compare fingerprints between real Safari (WebKit) and spoofed Camoufox via FE service"
     )
     parser.add_argument(
         "--real-only",
@@ -1558,11 +1700,6 @@ def main():
         "--spoofed-only",
         action="store_true",
         help="Only collect spoofed Camoufox fingerprint"
-    )
-    parser.add_argument(
-        "--use-webkit",
-        action="store_true",
-        help="Use Playwright WebKit instead of real iOS Safari (faster but less accurate)"
     )
     parser.add_argument(
         "--output", "-o",
@@ -1581,28 +1718,6 @@ def main():
         action="store_true",
         help="Run browsers in headful mode (visible)"
     )
-    parser.add_argument(
-        "--device",
-        type=str,
-        default="iPhone 15 Pro",
-        help="iOS device name for simulator"
-    )
-    parser.add_argument(
-        "--ios-version",
-        type=str,
-        default="18.3",
-        help="iOS version for simulator"
-    )
-    parser.add_argument(
-        "--static-config",
-        action="store_true",
-        help="Use hardcoded static config instead of dynamic config from real Safari"
-    )
-    parser.add_argument(
-        "--save-config",
-        type=str,
-        help="Save generated config to JSON file for inspection"
-    )
 
     args = parser.parse_args()
 
@@ -1615,69 +1730,79 @@ def main():
     real_result = None
     spoofed_result = None
 
-    # Collect real fingerprint
+    # Collect real fingerprint via FE with Playwright WebKit
     if not args.spoofed_only:
-        print("\n[1/2] Collecting REAL Safari fingerprint...")
+        print("\n[1/2] Collecting REAL fingerprint (WebKit via FE)...")
         try:
-            if args.use_webkit:
-                print("Using Playwright WebKit (not real Safari)")
-                real_result = get_real_webkit_fingerprint(headless=headless)
-            else:
-                real_result = get_real_safari_fingerprint(
-                    device_name=args.device,
-                    ios_version=args.ios_version
+            from playwright.sync_api import sync_playwright
+            print(f"  FE URL: {FE_URL}")
+            with sync_playwright() as p:
+                browser = p.webkit.launch(headless=headless)
+                context = browser.new_context(
+                    user_agent="Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.1 Mobile/15E148 Safari/604.1",
+                    viewport={"width": 440, "height": 956},
+                    device_scale_factor=3,
+                    is_mobile=True,
+                    has_touch=True,
                 )
+                page = context.new_page()
+                real_result = get_fingerprint_from_fe(page)
+                page.close()
+                context.close()
+                browser.close()
             print(f"  Collected {len(real_result.get('config', {}))} properties")
         except Exception as e:
             print(f"  ERROR: {e}")
-            if not args.use_webkit:
-                print("  TIP: Try --use-webkit for faster testing without iOS Simulator")
+            print("  Make sure FE is running: cd services/FE && bun run dev")
             real_result = {"config": {}, "unavailable": [], "errors": [str(e)]}
 
-    # Collect spoofed fingerprint
+    # Collect spoofed fingerprint via FE with Camoufox
     if not args.real_only:
-        print("\n[2/2] Collecting SPOOFED Camoufox fingerprint...")
+        print("\n[2/2] Collecting SPOOFED fingerprint (Camoufox via FE)...")
 
-        # Determine config mode
-        use_dynamic = not args.static_config and real_result and real_result.get('config')
+        from camoufox import Camoufox, DefaultAddons
 
-        if args.static_config:
-            # Static mode: use hardcoded config
-            spoof_config = SAFARI_MACOS_CONFIG if args.use_webkit else SAFARI_IOS_CONFIG
-            print(f"  Using STATIC {'macOS' if args.use_webkit else 'iOS'} Safari config")
-            dynamic_config_from = None
-        elif use_dynamic:
-            # Dynamic mode: generate config from real Safari fingerprint
-            print(f"  Using DYNAMIC config generated from real Safari fingerprint")
-            spoof_config = None  # Will be generated dynamically
-            dynamic_config_from = real_result
+        exec_path = args.exec_path or str(DEFAULT_CAMOUFOX_EXEC)
+        if not Path(exec_path).exists():
+            print(f"  ERROR: Camoufox executable not found at {exec_path}")
+            spoofed_result = {"config": {}, "unavailable": [], "errors": [f"Camoufox not found at {exec_path}"]}
         else:
-            # Fallback to static if no real fingerprint available
-            spoof_config = SAFARI_MACOS_CONFIG if args.use_webkit else SAFARI_IOS_CONFIG
-            print(f"  Using STATIC {'macOS' if args.use_webkit else 'iOS'} Safari config (no real fingerprint available)")
-            dynamic_config_from = None
+            # Use config from real browser fingerprint (FE already generates Camoufox config)
+            if real_result and real_result.get('config'):
+                # Filter out comparison-only keys (component.*, comparison.*)
+                spoof_config = {k: v for k, v in real_result['config'].items()
+                               if not k.startswith('component.') and not k.startswith('comparison.')}
+                print(f"  Using dynamic config with {len(spoof_config)} properties from real fingerprint")
+            else:
+                # Fallback to static config only if no real fingerprint
+                spoof_config = SAFARI_MACOS_CONFIG
+                print(f"  WARNING: No real fingerprint available, using static fallback config")
 
-        try:
-            spoofed_result = get_spoofed_fingerprint(
-                exec_path=args.exec_path,
-                config=spoof_config,
-                headless=headless,
-                dynamic_config_from=dynamic_config_from,
-            )
-            print(f"  Collected {len(spoofed_result.get('config', {}))} properties")
+            # Build Firefox user prefs based on config
+            firefox_prefs = {}
+            if spoof_config.get('window.SharedArrayBuffer:hide'):
+                firefox_prefs['javascript.options.shared_memory'] = False
 
-            # Save generated config if requested
-            if args.save_config and use_dynamic:
-                generated_config = convert_fingerprint_to_config(real_result)
-                save_path = Path(args.save_config)
-                save_path.parent.mkdir(parents=True, exist_ok=True)
-                with open(save_path, 'w') as f:
-                    json.dump(generated_config, f, indent=2, default=str)
-                print(f"  Saved generated config to: {save_path}")
-
-        except Exception as e:
-            print(f"  ERROR: {e}")
-            spoofed_result = {"config": {}, "unavailable": [], "errors": [str(e)]}
+            try:
+                print(f"  FE URL: {FE_URL}")
+                with Camoufox(
+                    executable_path=exec_path,
+                    ff_version=144,
+                    exclude_addons=[DefaultAddons.UBO],
+                    os="macos",
+                    debug=True,
+                    config=spoof_config,
+                    headless=headless,
+                    i_know_what_im_doing=True,
+                    firefox_user_prefs=firefox_prefs,
+                ) as browser:
+                    page = browser.new_page()
+                    spoofed_result = get_fingerprint_from_fe(page)
+                    page.close()
+                print(f"  Collected {len(spoofed_result.get('config', {}))} properties")
+            except Exception as e:
+                print(f"  ERROR: {e}")
+                spoofed_result = {"config": {}, "unavailable": [], "errors": [str(e)]}
 
     # Compare and output
     if real_result and spoofed_result:

@@ -596,6 +596,17 @@ def launch_options(
         LeakWarning.warn('disable_coop', i_know_what_im_doing)
         firefox_user_prefs['browser.tabs.remote.useCrossOriginOpenerPolicy'] = False
 
+    # Hide SharedArrayBuffer if configured (for Safari spoofing)
+    if config.get('window.SharedArrayBuffer:hide'):
+        firefox_user_prefs['javascript.options.shared_memory'] = False
+
+    # WebRTC local IP spoofing (for Safari mDNS obfuscation matching)
+    # When webrtc:localipv4 is set (e.g., to "0.0.0.0"), we need to:
+    # 1. Allow host candidates to be generated (disable ice.no_host)
+    # 2. The WebRTC spoofing patch will then replace private IPs with the configured value
+    if config.get('webrtc:localipv4') or config.get('webrtc:localipv6'):
+        firefox_user_prefs['media.peerconnection.ice.no_host'] = False
+
     # Allow allow_webgl parameter for backwards compatibility
     if block_webgl or launch_options.pop('allow_webgl', True) is False:
         firefox_user_prefs['webgl.disabled'] = True

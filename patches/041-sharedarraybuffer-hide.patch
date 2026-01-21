@@ -1,0 +1,31 @@
+diff --git a/dom/base/nsGlobalWindowOuter.cpp b/dom/base/nsGlobalWindowOuter.cpp
+index e7f5d6e5c0..a1b2c3d4e5 100644
+--- a/dom/base/nsGlobalWindowOuter.cpp
++++ b/dom/base/nsGlobalWindowOuter.cpp
+@@ -5,6 +5,7 @@
+  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+ 
+ #include "nsGlobalWindowOuter.h"
++#include "MaskConfig.hpp"  // Camoufox: For SharedArrayBuffer hiding
+ 
+ #include <algorithm>
+ 
+@@ -2022,7 +2023,16 @@ nsresult nsGlobalWindowOuter::CreateInnerWindow(
+   // When the global constructor property isn't defined, the SharedArrayBuffer
+   // constructor can still be reached through Web Assembly.  Omitting the global
+   // property just prevents feature-tests from being misled.  See bug 1624266.
+-  creationOptions.setDefineSharedArrayBufferConstructor(aDefineSharedArrayBufferConstructor);
++  //
++  // Camoufox: Allow config to hide SharedArrayBuffer for Safari spoofing
++  // NOTE: This prevents the property from being defined on the global, but
++  // SharedArrayBuffer may still be accessible through SpiderMonkey's lazy
++  // resolution mechanism. Full hiding requires deeper JS engine changes.
++  bool defineSharedArrayBuffer = aDefineSharedArrayBufferConstructor;
++  if (auto hide = MaskConfig::GetBool("window.SharedArrayBuffer:hide");
++      hide.has_value() && hide.value()) {
++    defineSharedArrayBuffer = false;
++  }
++  creationOptions.setDefineSharedArrayBufferConstructor(defineSharedArrayBuffer);
+ 
+   xpc::InitGlobalObjectOptions(
+       options, principal->IsSystemPrincipal(), aIsSecureContext,
