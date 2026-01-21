@@ -1,10 +1,11 @@
 diff --git a/dom/base/Navigator.cpp b/dom/base/Navigator.cpp
+index 1322021be8..62d87bbc83 100644
 --- a/dom/base/Navigator.cpp
 +++ b/dom/base/Navigator.cpp
-@@ -2395,6 +2395,60 @@ NavigatorLogin* Navigator::Login() {
-   return mLogin;
+@@ -2405,6 +2405,61 @@ bool Navigator::ShouldExposeUserAgentData(JSContext* aCx, JSObject* aObj) {
+   return true;  // Default: enabled (Chrome compatibility)
  }
-
+ 
 +// Camoufox: Control Firefox-specific property visibility for Safari spoofing
 +/* static */
 +bool Navigator::ShouldExposeBuildID(JSContext* aCx, JSObject* aObj) {
@@ -60,24 +61,45 @@ diff --git a/dom/base/Navigator.cpp b/dom/base/Navigator.cpp
 +  return true;
 +}
 +
- // Camoufox: Control userAgentData visibility via Func attribute
- /* static */
- bool Navigator::ShouldExposeUserAgentData(JSContext* aCx, JSObject* aObj) {
+ NavigatorUAData* Navigator::UserAgentData() {
+   // Visibility is controlled by Func attribute (ShouldExposeUserAgentData)
+   if (!mUserAgentData) {
+diff --git a/dom/base/Navigator.h b/dom/base/Navigator.h
+index 1a8b721cde..abd1b32750 100644
+--- a/dom/base/Navigator.h
++++ b/dom/base/Navigator.h
+@@ -238,8 +238,14 @@ class Navigator final : public nsISupports, public nsWrapperCache {
+ 
+   static bool HasMidiSupport(JSContext* /* unused */, JSObject* /* unused */);
+ 
+-  // Camoufox: Control userAgentData visibility
++  // Camoufox: Control visibility of Firefox-specific APIs
+   static bool ShouldExposeUserAgentData(JSContext*, JSObject*);
++  static bool ShouldExposeBuildID(JSContext*, JSObject*);
++  static bool ShouldExposeOscpu(JSContext*, JSObject*);
++  static bool ShouldExposeDoNotTrack(JSContext*, JSObject*);
++  static bool ShouldExposeGlobalPrivacyControl(JSContext*, JSObject*);
++  static bool ShouldExposeBattery(JSContext*, JSObject*);
++  static bool ShouldExposeConnection(JSContext*, JSObject*);
+ 
+   nsPIDOMWindowInner* GetParentObject() const { return GetWindow(); }
+ 
 diff --git a/dom/events/TouchEvent.cpp b/dom/events/TouchEvent.cpp
+index 716032ee3b..24754746a8 100644
 --- a/dom/events/TouchEvent.cpp
 +++ b/dom/events/TouchEvent.cpp
-@@ -20,6 +20,7 @@
+@@ -18,6 +18,7 @@
  #include "nsContentUtils.h"
+ #include "nsExceptionHandler.h"
  #include "nsIDocShell.h"
- #include "nsGlobalWindowInner.h"
 +#include "MaskConfig.hpp"
-
+ 
  namespace mozilla::dom {
-
-@@ -230,6 +231,13 @@ bool TouchEvent::PrefEnabled(nsIDocShell* aDocShell) {
+ 
+@@ -220,6 +221,13 @@ bool TouchEvent::PrefEnabled(nsIDocShell* aDocShell) {
      }
    }
-
+ 
 +  // Camoufox: Allow config override for Safari spoofing
 +  // Safari exposes TouchEvent even on non-touch devices
 +  if (auto value = MaskConfig::GetBool("window.TouchEvent");
@@ -89,50 +111,30 @@ diff --git a/dom/events/TouchEvent.cpp b/dom/events/TouchEvent.cpp
    if (touchEventsOverride == mozilla::dom::TouchEventsOverride::Enabled) {
      enabled = true;
 diff --git a/dom/events/moz.build b/dom/events/moz.build
+index 36d6f4dd1d..77a6e686cb 100644
 --- a/dom/events/moz.build
 +++ b/dom/events/moz.build
-@@ -163,3 +163,6 @@ include("/ipc/chromium/chromium-config.mozbuild")
-
- FINAL_LIBRARY = "xul"
-+
-+# Camoufox: DOM Mask configuration
-+LOCAL_INCLUDES += ["/camoucfg"]
-diff --git a/dom/base/Navigator.cpp b/dom/base/Navigator.cpp
---- a/dom/base/Navigator.cpp
-+++ b/dom/base/Navigator.cpp
-@@ -2395,6 +2395,60 @@ NavigatorLogin* Navigator::Login() {
-diff --git a/dom/base/Navigator.h b/dom/base/Navigator.h
---- a/dom/base/Navigator.h
-+++ b/dom/base/Navigator.h
-@@ -241,6 +241,14 @@ class Navigator final : public nsISupports, public nsWrapperCache {
-   // Camoufox: Control userAgentData visibility
-   static bool ShouldExposeUserAgentData(JSContext*, JSObject*);
-
-+  // Camoufox: Control Firefox-specific property visibility for Safari spoofing
-+  static bool ShouldExposeBuildID(JSContext*, JSObject*);
-+  static bool ShouldExposeOscpu(JSContext*, JSObject*);
-+  static bool ShouldExposeDoNotTrack(JSContext*, JSObject*);
-+  static bool ShouldExposeGlobalPrivacyControl(JSContext*, JSObject*);
-+  static bool ShouldExposeBattery(JSContext*, JSObject*);
-+  static bool ShouldExposeConnection(JSContext*, JSObject*);
-+
-   nsPIDOMWindowInner* GetParentObject() const { return GetWindow(); }
-
-   virtual JSObject* WrapObject(JSContext* cx,
+@@ -184,4 +184,6 @@ LOCAL_INCLUDES += [
+     "/layout/generic",
+     "/layout/xul",
+     "/layout/xul/tree/",
++    # Camoufox: DOM Mask configuration
++    "/camoucfg",
+ ]
 diff --git a/dom/webidl/Navigator.webidl b/dom/webidl/Navigator.webidl
+index 5e3aec06ea..7fb576126e 100644
 --- a/dom/webidl/Navigator.webidl
 +++ b/dom/webidl/Navigator.webidl
-@@ -115,17 +115,21 @@ partial interface Navigator {
+@@ -115,13 +115,16 @@ partial interface Navigator {
  };
-
+ 
  // http://www.w3.org/TR/tracking-dnt/ sort of
 +// Camoufox: Added Func to allow hiding for Safari spoofing
  partial interface Navigator {
--  readonly attribute DOMString doNotTrack;
 +  [Func="Navigator::ShouldExposeDoNotTrack"]
-+  readonly attribute DOMString doNotTrack;
+   readonly attribute DOMString doNotTrack;
  };
-
+ 
  // https://globalprivacycontrol.github.io/gpc-spec/
 +// Camoufox: Added Func to allow hiding for Safari spoofing
  interface mixin GlobalPrivacyControl {
@@ -140,14 +142,10 @@ diff --git a/dom/webidl/Navigator.webidl b/dom/webidl/Navigator.webidl
 +  [Pref="privacy.globalprivacycontrol.functionality.enabled", Func="Navigator::ShouldExposeGlobalPrivacyControl"]
    readonly attribute boolean globalPrivacyControl;
  };
-
- // http://www.w3.org/TR/geolocation-API/#geolocation_interface
- interface mixin NavigatorGeolocation {
-   [Throws, Pref="geo.enabled"]
-   readonly attribute Geolocation geolocation;
-@@ -133,8 +137,9 @@ interface mixin NavigatorGeolocation {
+ 
+@@ -133,8 +136,9 @@ interface mixin NavigatorGeolocation {
  Navigator includes NavigatorGeolocation;
-
+ 
  // http://www.w3.org/TR/battery-status/#navigatorbattery-interface
 +// Camoufox: Added Func to allow hiding for Safari spoofing
  partial interface Navigator {
@@ -155,11 +153,11 @@ diff --git a/dom/webidl/Navigator.webidl b/dom/webidl/Navigator.webidl
 +  [Throws, Pref="dom.battery.enabled", Func="Navigator::ShouldExposeBattery"]
    Promise<BatteryManager> getBattery();
  };
-
-@@ -177,9 +182,10 @@ partial interface Navigator {
+ 
+@@ -174,8 +178,9 @@ partial interface Navigator {
                                       optional boolean persistent = true);
  };
-
+ 
 +// Camoufox: Added Func to oscpu and buildID to allow hiding for Safari spoofing
  partial interface Navigator {
 -  [Throws, Constant, Cached, NeedsCallerType]
@@ -167,19 +165,18 @@ diff --git a/dom/webidl/Navigator.webidl b/dom/webidl/Navigator.webidl
    readonly attribute DOMString oscpu;
    // WebKit/Blink support this; Trident/Presto do not.
    readonly attribute DOMString vendor;
-@@ -188,7 +194,7 @@ partial interface Navigator {
-   // WebKit/Blink supports this (hardcoded "20030107"); Trident/Presto don't
+@@ -185,7 +190,7 @@ partial interface Navigator {
    readonly attribute DOMString productSub;
    // WebKit/Blink/Trident/Presto support this.
    readonly attribute boolean cookieEnabled;
 -  [Throws, Constant, Cached, NeedsCallerType]
 +  [Throws, Constant, Cached, NeedsCallerType, Func="Navigator::ShouldExposeBuildID"]
    readonly attribute DOMString buildID;
-
+ 
    // WebKit/Blink/Trident/Presto support this.
-@@ -201,8 +207,9 @@ partial interface Navigator {
+@@ -200,8 +205,9 @@ partial interface Navigator {
  };
-
+ 
  // NetworkInformation
 +// Camoufox: Added Func to allow hiding for Safari spoofing
  partial interface Navigator {
@@ -187,4 +184,4 @@ diff --git a/dom/webidl/Navigator.webidl b/dom/webidl/Navigator.webidl
 +  [Throws, Func="Navigator::ShouldExposeConnection"]
    readonly attribute NetworkInformation connection;
  };
-
+ 
