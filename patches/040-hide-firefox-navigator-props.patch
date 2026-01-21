@@ -114,13 +114,15 @@ diff --git a/dom/events/moz.build b/dom/events/moz.build
 index 36d6f4dd1d..77a6e686cb 100644
 --- a/dom/events/moz.build
 +++ b/dom/events/moz.build
-@@ -184,4 +184,6 @@ LOCAL_INCLUDES += [
-     "/layout/generic",
-     "/layout/xul",
-     "/layout/xul/tree/",
+@@ -174,7 +174,9 @@ include("/ipc/chromium/chromium-config.mozbuild")
+
+ FINAL_LIBRARY = "xul"
+ LOCAL_INCLUDES += [
 +    # Camoufox: DOM Mask configuration
 +    "/camoucfg",
- ]
+     "/docshell/base",
+     "/dom/base",
+     "/dom/html",
 diff --git a/dom/webidl/Navigator.webidl b/dom/webidl/Navigator.webidl
 index 5e3aec06ea..7fb576126e 100644
 --- a/dom/webidl/Navigator.webidl

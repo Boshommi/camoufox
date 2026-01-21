@@ -27,12 +27,13 @@ COMPARISON_FILE = OUTPUT_DIR / "comparison.json"
 # Default Camoufox executable path
 DEFAULT_CAMOUFOX_EXEC = PROJECT_ROOT / "dist" / "Camoufox.app" / "Contents" / "MacOS" / "camoufox"
 
-# Safari iOS config to spoof
+# Safari iOS config to spoof (iPhone 15 Pro, iOS 18.3)
 SAFARI_IOS_CONFIG = {
-    "navigator.userAgent": "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.1 Mobile/15E148 Safari/604.1",
+    # Navigator properties
+    "navigator.userAgent": "Mozilla/5.0 (iPhone; CPU iPhone OS 18_3_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.3 Mobile/15E148 Safari/604.1",
     "navigator.appCodeName": "Mozilla",
     "navigator.appName": "Netscape",
-    "navigator.appVersion": "5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.1 Mobile/15E148 Safari/604.1",
+    "navigator.appVersion": "5.0 (iPhone; CPU iPhone OS 18_3_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.3 Mobile/15E148 Safari/604.1",
     "navigator.language": "en-US",
     "navigator.platform": "iPhone",
     "navigator.product": "Gecko",
@@ -42,6 +43,18 @@ SAFARI_IOS_CONFIG = {
     "navigator.vendorSub": "",
     "navigator.webdriver": False,
     "navigator.userAgentData": False,
+    "navigator.hardwareConcurrency": 8,
+
+    # Touch support (critical for iOS Safari detection)
+    "navigator.maxTouchPoints": 5,
+    "window.TouchEvent": True,
+
+    # Media queries for touch device (critical for iOS Safari detection)
+    "mediaQuery:hover": "none",
+    "mediaQuery:pointer": "coarse",
+    "mediaQuery:any-hover": "none",
+    "mediaQuery:any-pointer": "coarse",
+
     # Hide Firefox-specific navigator properties
     "navigator.buildID:hide": True,
     "navigator.oscpu:hide": True,
@@ -50,8 +63,39 @@ SAFARI_IOS_CONFIG = {
     "navigator.getBattery:hide": True,
     "navigator.connection:hide": True,
     "window.InstallTrigger:hide": True,
-    "window.webkit": True,  # iOS Safari has window.webkit
+
+    # Safari-specific APIs
+    "window.webkit": False,  # iOS Safari on data: URLs reports false
+    "window.safari": False,  # iOS Safari doesn't expose window.safari
+
+    # Hide SharedArrayBuffer (iOS Safari doesn't have it)
+    "window.SharedArrayBuffer:hide": True,
+
+    # WebGL spoofing for Safari (using numeric parameter keys)
+    # GL_VENDOR = 7937, GL_RENDERER = 7936
+    "webGl:parameters": {
+        "7937": "WebKit",        # GL_VENDOR
+        "7936": "WebKit WebGL",  # GL_RENDERER
+    },
+
+    # Screen dimensions (iPhone 15 Pro)
+    "screen.width": 393,
+    "screen.height": 852,
+    "screen.availWidth": 393,
+    "screen.availHeight": 852,
+    "screen.colorDepth": 24,
+    "screen.pixelDepth": 24,
+
+    # Window dimensions (Safari mobile viewport)
+    "window.innerWidth": 980,
+    "window.innerHeight": 1643,
+    "window.outerWidth": 393,
+    "window.outerHeight": 852,
     "window.devicePixelRatio": 3,
+
+    # Voices - block all since iOS Safari returns empty on data: URLs
+    "voices": [],
+    "voices:blockIfNotDefined": True,
 }
 
 # Safari macOS config to spoof (for --use-webkit mode)
@@ -359,12 +403,16 @@ def get_spoofed_fingerprint(
 
     detector_js = load_detector_js()
 
+    print(f"  Config keys: {list(config.keys())}")
+    print(f"  webGl:vendor = {config.get('webGl:vendor')}")
+    print(f"  webGl:renderer = {config.get('webGl:renderer')}")
+
     with Camoufox(
         executable_path=exec_path,
         ff_version=144,
         exclude_addons=[DefaultAddons.UBO],
         os="macos",
-        debug=False,
+        debug=True,
         config=config,
         headless=headless,
         i_know_what_im_doing=True,
@@ -381,7 +429,7 @@ def get_spoofed_fingerprint(
 
 def get_real_safari_fingerprint(
     device_name: str = "iPhone 15 Pro",
-    ios_version: str = "18.0",
+    ios_version: str = "18.3",
     timeout: int = 60
 ) -> Dict[str, Any]:
     """Get fingerprint from real iOS Safari via Appium."""
@@ -411,21 +459,414 @@ def get_real_safari_fingerprint(
     options.browser_name = "Safari"
     options.automation_name = "XCUITest"
     options.no_reset = True
+    # Reuse existing simulator if available
+    options.set_capability("useSimulatorNow", True)
+    options.set_capability("shouldTerminateApp", True)
+    # Increase webview connect timeout (default 6232ms is often not enough)
+    options.set_capability("webviewConnectTimeout", 30000)
 
     driver = None
     try:
         print(f"Connecting to iOS Simulator ({device_name}, iOS {ios_version})...")
         driver = webdriver.Remote("http://localhost:4723", options=options)
-        driver.implicitly_wait(timeout)
+        driver.implicitly_wait(5)  # 5 seconds max for element waits
+        driver.set_page_load_timeout(10)  # 10 seconds for page loads
+        driver.set_script_timeout(5)  # 5 seconds for script execution
 
-        print("Opening about:blank...")
-        driver.get("about:blank")
-        time.sleep(1)  # Let page settle
+        print("Opening data URL page...")
+        driver.get("data:text/html,<html><head></head><body></body></html>")
 
-        print("Injecting detector and running...")
-        # Inject and run detector
-        driver.execute_script(detector_js)
-        result = driver.execute_script("return window.__fpDetector.detectAll();")
+        print("Injecting detector as script element...")
+        # Try to catch any errors during script execution
+        inject_result = driver.execute_script("""
+            try {
+                var script = document.createElement('script');
+                script.id = 'fp-detector';
+                script.textContent = arguments[0];
+                // Add error handler
+                script.onerror = function(e) { window.__fpScriptError = e.toString(); };
+                document.head.appendChild(script);
+                return {injected: true, error: null};
+            } catch(e) {
+                return {injected: false, error: e.toString()};
+            }
+        """, detector_js)
+        print(f"  Script inject result: {inject_result}")
+
+        # Check for errors and detector
+        error_check = driver.execute_script("return window.__fpScriptError;")
+        if error_check:
+            print(f"  Script error: {error_check}")
+
+        # Check for YandexBrowserInfo (from browser-info-generator.js)
+        detector_check = driver.execute_script("return typeof window.YandexBrowserInfo;")
+        print(f"  YandexBrowserInfo type: {detector_check}")
+
+        if detector_check == 'object':
+            print("Running comprehensive fingerprint collection with getAsyncDetection...")
+            driver.set_script_timeout(20)
+            # Use execute_async_script with Promise.then() for full async detection
+            result = driver.execute_async_script("""
+                var done = arguments[arguments.length - 1];
+
+                try {
+                    var browser = new window.YandexBrowserInfo.BrowserDetector(window);
+                    var collector = new window.YandexBrowserInfo.FingerprintCollector(window);
+                    var params = {};
+
+                    // Navigator properties
+                    params['navigator.userAgent'] = navigator.userAgent;
+                    params['navigator.appCodeName'] = navigator.appCodeName;
+                    params['navigator.appName'] = navigator.appName;
+                    params['navigator.appVersion'] = navigator.appVersion;
+                    params['navigator.language'] = navigator.language;
+                    params['navigator.languages'] = Array.from(navigator.languages || []);
+                    params['navigator.platform'] = navigator.platform;
+                    params['navigator.product'] = navigator.product;
+                    params['navigator.productSub'] = navigator.productSub;
+                    params['navigator.vendor'] = navigator.vendor;
+                    params['navigator.vendorSub'] = navigator.vendorSub;
+                    params['navigator.hardwareConcurrency'] = navigator.hardwareConcurrency;
+                    params['navigator.maxTouchPoints'] = navigator.maxTouchPoints;
+                    params['navigator.cookieEnabled'] = navigator.cookieEnabled;
+                    params['navigator.webdriver'] = navigator.webdriver;
+                    params['navigator.buildID'] = navigator.buildID;
+                    params['navigator.oscpu'] = navigator.oscpu;
+                    params['navigator.doNotTrack'] = navigator.doNotTrack;
+                    params['navigator.globalPrivacyControl'] = navigator.globalPrivacyControl;
+                    params['navigator.pdfViewerEnabled'] = navigator.pdfViewerEnabled;
+
+                    // Screen properties
+                    params['screen.width'] = screen.width;
+                    params['screen.height'] = screen.height;
+                    params['screen.availWidth'] = screen.availWidth;
+                    params['screen.availHeight'] = screen.availHeight;
+                    params['screen.availLeft'] = screen.availLeft;
+                    params['screen.availTop'] = screen.availTop;
+                    params['screen.colorDepth'] = screen.colorDepth;
+                    params['screen.pixelDepth'] = screen.pixelDepth;
+
+                    // Window properties
+                    params['window.innerWidth'] = window.innerWidth;
+                    params['window.innerHeight'] = window.innerHeight;
+                    params['window.outerWidth'] = window.outerWidth;
+                    params['window.outerHeight'] = window.outerHeight;
+                    params['window.screenX'] = window.screenX;
+                    params['window.screenY'] = window.screenY;
+                    params['window.devicePixelRatio'] = window.devicePixelRatio;
+
+                    // Browser-specific APIs
+                    params['window.InstallTrigger'] = typeof window.InstallTrigger !== 'undefined';
+                    params['window.chrome'] = typeof window.chrome !== 'undefined' && window.chrome !== null;
+                    params['window.webkit'] = typeof window.webkit !== 'undefined' && window.webkit !== null;
+                    params['window.safari'] = typeof window.safari !== 'undefined' && window.safari !== null;
+
+                    // Touch APIs
+                    params['touch.maxTouchPoints'] = navigator.maxTouchPoints || 0;
+                    params['touch.ontouchstart'] = 'ontouchstart' in window;
+                    params['touch.TouchEvent'] = typeof TouchEvent !== 'undefined';
+
+                    // SharedArrayBuffer
+                    params['hasSharedArrayBuffer'] = typeof SharedArrayBuffer !== 'undefined';
+
+                    // Plugins
+                    params['plugins.count'] = navigator.plugins ? navigator.plugins.length : 0;
+                    params['plugins.list'] = [];
+                    if (navigator.plugins) {
+                        for (var i = 0; i < Math.min(navigator.plugins.length, 10); i++) {
+                            var p = navigator.plugins[i];
+                            params['plugins.list'].push({
+                                name: p.name,
+                                description: p.description,
+                                filename: p.filename
+                            });
+                        }
+                    }
+
+                    // WebGL
+                    try {
+                        var canvas = document.createElement('canvas');
+                        var gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+                        if (gl) {
+                            params['webgl.vendor'] = gl.getParameter(gl.VENDOR);
+                            params['webgl.renderer'] = gl.getParameter(gl.RENDERER);
+                            params['webgl.version'] = gl.getParameter(gl.VERSION);
+                            params['webgl.shadingLanguageVersion'] = gl.getParameter(gl.SHADING_LANGUAGE_VERSION);
+                            params['webgl.maxTextureSize'] = gl.getParameter(gl.MAX_TEXTURE_SIZE);
+                            params['webgl.maxRenderbufferSize'] = gl.getParameter(gl.MAX_RENDERBUFFER_SIZE);
+
+                            var debugInfo = gl.getExtension('WEBGL_debug_renderer_info');
+                            if (debugInfo) {
+                                params['webgl.unmaskedVendor'] = gl.getParameter(debugInfo.UNMASKED_VENDOR_WEBGL);
+                                params['webgl.unmaskedRenderer'] = gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL);
+                            }
+
+                            var extensions = gl.getSupportedExtensions();
+                            params['webgl.extensions'] = extensions ? extensions.sort() : [];
+                            params['webgl.extensionsCount'] = extensions ? extensions.length : 0;
+                        }
+                    } catch(e) {}
+
+                    // Media queries
+                    params['mediaQuery.prefersColorSchemeDark'] = window.matchMedia('(prefers-color-scheme: dark)').matches;
+                    params['mediaQuery.prefersColorSchemeLight'] = window.matchMedia('(prefers-color-scheme: light)').matches;
+                    params['mediaQuery.prefersReducedMotion'] = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+                    params['mediaQuery.hoverHover'] = window.matchMedia('(hover: hover)').matches;
+                    params['mediaQuery.hoverNone'] = window.matchMedia('(hover: none)').matches;
+                    params['mediaQuery.pointerFine'] = window.matchMedia('(pointer: fine)').matches;
+                    params['mediaQuery.pointerCoarse'] = window.matchMedia('(pointer: coarse)').matches;
+                    params['mediaQuery.anyHoverHover'] = window.matchMedia('(any-hover: hover)').matches;
+                    params['mediaQuery.anyHoverNone'] = window.matchMedia('(any-hover: none)').matches;
+                    params['mediaQuery.anyPointerFine'] = window.matchMedia('(any-pointer: fine)').matches;
+                    params['mediaQuery.anyPointerCoarse'] = window.matchMedia('(any-pointer: coarse)').matches;
+
+                    // Timezone
+                    params['date.timezoneOffset'] = new Date().getTimezoneOffset();
+
+                    // Performance memory
+                    params['performance.memory.jsHeapSizeLimit'] = (performance.memory ? performance.memory.jsHeapSizeLimit : null);
+
+                    // Platform APIs from BrowserDetector
+                    var platformAPIs = browser.getPlatformAPIs();
+                    for (var key in platformAPIs) {
+                        params['platform.' + key] = platformAPIs[key];
+                    }
+
+                    // Use getAsyncDetection() for all async data (voices, clientHints, webRTC, etc.)
+                    window.YandexBrowserInfo.getAsyncDetection().then(function(asyncData) {
+                        // Add async detection results
+                        if (asyncData.voices) {
+                            params['voices.count'] = asyncData.voices.count || 0;
+                            params['voices.list'] = asyncData.voices.list || [];
+                        }
+                        if (asyncData.userAgentClientHints) {
+                            params['async.userAgentClientHints'] = asyncData.userAgentClientHints;
+                        }
+                        if (asyncData.webRTCLocalIP) {
+                            params['async.webRTCLocalIP'] = asyncData.webRTCLocalIP;
+                        }
+                        if (asyncData.cookieDeprecationLabel) {
+                            params['async.cookieDeprecationLabel'] = asyncData.cookieDeprecationLabel;
+                        }
+                        done({config: params, asyncData: asyncData});
+                    }).catch(function(e) {
+                        // Fallback if getAsyncDetection fails - still return sync data
+                        params['voices.count'] = 0;
+                        params['voices.list'] = [];
+                        done({config: params, error: 'async failed: ' + e.toString()});
+                    });
+                } catch(e) {
+                    done({error: e.toString()});
+                }
+            """)
+        else:
+            print("  YandexBrowserInfo not found, using inline fallback...")
+            # Comprehensive inline collector that doesn't depend on browser-info-generator
+            driver.set_script_timeout(15)
+            result = driver.execute_async_script("""
+                var done = arguments[arguments.length - 1];
+
+                try {
+                    var params = {};
+
+                    // Navigator properties
+                    params['navigator.userAgent'] = navigator.userAgent;
+                    params['navigator.appCodeName'] = navigator.appCodeName;
+                    params['navigator.appName'] = navigator.appName;
+                    params['navigator.appVersion'] = navigator.appVersion;
+                    params['navigator.language'] = navigator.language;
+                    params['navigator.languages'] = Array.from(navigator.languages || []);
+                    params['navigator.platform'] = navigator.platform;
+                    params['navigator.product'] = navigator.product;
+                    params['navigator.productSub'] = navigator.productSub;
+                    params['navigator.vendor'] = navigator.vendor;
+                    params['navigator.vendorSub'] = navigator.vendorSub;
+                    params['navigator.hardwareConcurrency'] = navigator.hardwareConcurrency;
+                    params['navigator.maxTouchPoints'] = navigator.maxTouchPoints;
+                    params['navigator.cookieEnabled'] = navigator.cookieEnabled;
+                    params['navigator.webdriver'] = navigator.webdriver;
+                    params['navigator.buildID'] = navigator.buildID;
+                    params['navigator.oscpu'] = navigator.oscpu;
+                    params['navigator.doNotTrack'] = navigator.doNotTrack;
+                    params['navigator.globalPrivacyControl'] = navigator.globalPrivacyControl;
+                    params['navigator.pdfViewerEnabled'] = navigator.pdfViewerEnabled;
+
+                    // Screen properties
+                    params['screen.width'] = screen.width;
+                    params['screen.height'] = screen.height;
+                    params['screen.availWidth'] = screen.availWidth;
+                    params['screen.availHeight'] = screen.availHeight;
+                    params['screen.availLeft'] = screen.availLeft;
+                    params['screen.availTop'] = screen.availTop;
+                    params['screen.colorDepth'] = screen.colorDepth;
+                    params['screen.pixelDepth'] = screen.pixelDepth;
+
+                    // Window properties
+                    params['window.innerWidth'] = window.innerWidth;
+                    params['window.innerHeight'] = window.innerHeight;
+                    params['window.outerWidth'] = window.outerWidth;
+                    params['window.outerHeight'] = window.outerHeight;
+                    params['window.screenX'] = window.screenX;
+                    params['window.screenY'] = window.screenY;
+                    params['window.devicePixelRatio'] = window.devicePixelRatio;
+
+                    // Browser-specific APIs
+                    params['window.InstallTrigger'] = typeof window.InstallTrigger !== 'undefined';
+                    params['window.chrome'] = typeof window.chrome !== 'undefined' && window.chrome !== null;
+                    params['window.webkit'] = typeof window.webkit !== 'undefined' && window.webkit !== null;
+                    params['window.safari'] = typeof window.safari !== 'undefined' && window.safari !== null;
+
+                    // Touch APIs
+                    params['touch.maxTouchPoints'] = navigator.maxTouchPoints || 0;
+                    params['touch.ontouchstart'] = 'ontouchstart' in window;
+                    params['touch.TouchEvent'] = typeof TouchEvent !== 'undefined';
+
+                    // SharedArrayBuffer
+                    params['hasSharedArrayBuffer'] = typeof SharedArrayBuffer !== 'undefined';
+
+                    // Platform APIs (manual detection)
+                    params['platform.hasChrome'] = typeof window.chrome !== 'undefined' && window.chrome !== null;
+                    params['platform.jsHeapLimit'] = (performance.memory ? performance.memory.jsHeapSizeLimit : null);
+                    params['platform.hasPdfViewer'] = (function() {
+                        var plugins = navigator.plugins;
+                        if (!plugins || !plugins.length) return false;
+                        for (var i = 0; i < plugins.length; i++) {
+                            if (plugins[i].name && /Chrome PDF Viewer/.test(plugins[i].name)) return true;
+                        }
+                        return false;
+                    })();
+                    params['platform.applePay'] = (function() {
+                        try {
+                            if (!window.ApplePaySession) return null;
+                            if (location.protocol !== 'https:') return null;
+                            return {available: true, canMakePayments: window.ApplePaySession.canMakePayments ? window.ApplePaySession.canMakePayments() : false};
+                        } catch(e) { return null; }
+                    })();
+                    params['platform.hasInstallTrigger'] = typeof window.InstallTrigger !== 'undefined';
+                    params['platform.hasMozAppearance'] = !!(document.documentElement.style && 'MozAppearance' in document.documentElement.style);
+                    params['platform.isOpera'] = !!(window.opr || window.opera);
+                    params['platform.isBrave'] = !!(navigator.brave && typeof navigator.brave.isBrave === 'function');
+                    params['platform.msDoNotTrack'] = navigator.msDoNotTrack || null;
+                    params['platform.hasWebkitPerformance'] = !!window.webkitPerformance;
+                    params['platform.hasWebkitNotifications'] = !!window.webkitNotifications;
+                    params['platform.hasPermissions'] = !!navigator.permissions;
+                    params['platform.hasCredentials'] = !!navigator.credentials;
+                    params['platform.hasBluetooth'] = !!navigator.bluetooth;
+                    params['platform.hasUSB'] = !!navigator.usb;
+                    params['platform.hasSerial'] = !!navigator.serial;
+                    params['platform.hasSharedArrayBuffer'] = typeof SharedArrayBuffer !== 'undefined';
+                    params['platform.hasWebGL2'] = !!window.WebGL2RenderingContext;
+                    params['platform.hasOffscreenCanvas'] = !!window.OffscreenCanvas;
+
+                    // Plugins
+                    params['plugins.count'] = navigator.plugins ? navigator.plugins.length : 0;
+                    params['plugins.list'] = [];
+                    if (navigator.plugins) {
+                        for (var i = 0; i < Math.min(navigator.plugins.length, 10); i++) {
+                            var p = navigator.plugins[i];
+                            params['plugins.list'].push({name: p.name, description: p.description, filename: p.filename});
+                        }
+                    }
+
+                    // WebGL
+                    try {
+                        var canvas = document.createElement('canvas');
+                        var gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+                        if (gl) {
+                            params['webgl.vendor'] = gl.getParameter(gl.VENDOR);
+                            params['webgl.renderer'] = gl.getParameter(gl.RENDERER);
+                            params['webgl.version'] = gl.getParameter(gl.VERSION);
+                            params['webgl.shadingLanguageVersion'] = gl.getParameter(gl.SHADING_LANGUAGE_VERSION);
+                            params['webgl.maxTextureSize'] = gl.getParameter(gl.MAX_TEXTURE_SIZE);
+                            params['webgl.maxRenderbufferSize'] = gl.getParameter(gl.MAX_RENDERBUFFER_SIZE);
+
+                            var debugInfo = gl.getExtension('WEBGL_debug_renderer_info');
+                            if (debugInfo) {
+                                params['webgl.unmaskedVendor'] = gl.getParameter(debugInfo.UNMASKED_VENDOR_WEBGL);
+                                params['webgl.unmaskedRenderer'] = gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL);
+                            }
+
+                            var extensions = gl.getSupportedExtensions();
+                            params['webgl.extensions'] = extensions ? extensions.sort() : [];
+                            params['webgl.extensionsCount'] = extensions ? extensions.length : 0;
+                        }
+                    } catch(e) {}
+
+                    // Media queries
+                    params['mediaQuery.prefersColorSchemeDark'] = window.matchMedia('(prefers-color-scheme: dark)').matches;
+                    params['mediaQuery.prefersColorSchemeLight'] = window.matchMedia('(prefers-color-scheme: light)').matches;
+                    params['mediaQuery.prefersReducedMotion'] = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+                    params['mediaQuery.hoverHover'] = window.matchMedia('(hover: hover)').matches;
+                    params['mediaQuery.hoverNone'] = window.matchMedia('(hover: none)').matches;
+                    params['mediaQuery.pointerFine'] = window.matchMedia('(pointer: fine)').matches;
+                    params['mediaQuery.pointerCoarse'] = window.matchMedia('(pointer: coarse)').matches;
+                    params['mediaQuery.anyHoverHover'] = window.matchMedia('(any-hover: hover)').matches;
+                    params['mediaQuery.anyHoverNone'] = window.matchMedia('(any-hover: none)').matches;
+                    params['mediaQuery.anyPointerFine'] = window.matchMedia('(any-pointer: fine)').matches;
+                    params['mediaQuery.anyPointerCoarse'] = window.matchMedia('(any-pointer: coarse)').matches;
+
+                    // Timezone
+                    params['date.timezoneOffset'] = new Date().getTimezoneOffset();
+
+                    // Performance memory
+                    params['performance.memory.jsHeapSizeLimit'] = (performance.memory ? performance.memory.jsHeapSizeLimit : null);
+
+                    // Voices with async loading
+                    var synthesis = window.speechSynthesis;
+                    if (synthesis && synthesis.getVoices) {
+                        var voices = synthesis.getVoices();
+                        if (!voices || voices.length === 0) {
+                            // Wait for voiceschanged event
+                            var resolved = false;
+                            var onVoicesChanged = function() {
+                                if (resolved) return;
+                                resolved = true;
+                                synthesis.removeEventListener('voiceschanged', onVoicesChanged);
+                                voices = synthesis.getVoices();
+                                params['voices.count'] = voices ? voices.length : 0;
+                                params['voices.list'] = voices ? voices.map(function(v) {
+                                    return {name: v.name, lang: v.lang, localService: v.localService, voiceURI: v.voiceURI};
+                                }) : [];
+                                done({config: params});
+                            };
+                            synthesis.addEventListener('voiceschanged', onVoicesChanged);
+                            setTimeout(function() {
+                                if (!resolved) {
+                                    resolved = true;
+                                    synthesis.removeEventListener('voiceschanged', onVoicesChanged);
+                                    voices = synthesis.getVoices() || [];
+                                    params['voices.count'] = voices.length;
+                                    params['voices.list'] = voices.map(function(v) {
+                                        return {name: v.name, lang: v.lang, localService: v.localService, voiceURI: v.voiceURI};
+                                    });
+                                    done({config: params});
+                                }
+                            }, 2000);
+                        } else {
+                            params['voices.count'] = voices.length;
+                            params['voices.list'] = voices.map(function(v) {
+                                return {name: v.name, lang: v.lang, localService: v.localService, voiceURI: v.voiceURI};
+                            });
+                            done({config: params});
+                        }
+                    } else {
+                        params['voices.count'] = 0;
+                        params['voices.list'] = [];
+                        done({config: params});
+                    }
+                } catch(e) {
+                    done({error: e.toString()});
+                }
+            """)
+
+        if result:
+            if 'error' in result:
+                print(f"  JS Error: {result.get('error')}")
+            else:
+                config = result.get('config', {})
+                print(f"  Collected {len(config)} properties")
+        else:
+            print("  ERROR: Failed to collect fingerprint")
 
         return result
 
@@ -633,7 +1074,7 @@ def main():
     parser.add_argument(
         "--ios-version",
         type=str,
-        default="18.0",
+        default="18.3",
         help="iOS version for simulator"
     )
 

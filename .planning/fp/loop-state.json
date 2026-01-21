@@ -1,0 +1,49 @@
+{
+  "started": "2026-01-21T18:00:00Z",
+  "current_phase": "fix",
+  "current_param": null,
+  "fixed": [],
+  "skipped": [],
+  "patches_created": [],
+  "remaining": [
+    "touch.TouchEvent",
+    "touch.ontouchstart",
+    "touch.maxTouchPoints",
+    "navigator.maxTouchPoints",
+    "mediaQuery.hoverHover",
+    "mediaQuery.hoverNone",
+    "mediaQuery.pointerFine",
+    "mediaQuery.pointerCoarse",
+    "mediaQuery.anyHoverHover",
+    "mediaQuery.anyHoverNone",
+    "mediaQuery.anyPointerFine",
+    "mediaQuery.anyPointerCoarse",
+    "webgl.vendor",
+    "webgl.renderer",
+    "webgl.unmaskedVendor",
+    "webgl.unmaskedRenderer",
+    "hasSharedArrayBuffer",
+    "platform.hasSharedArrayBuffer",
+    "window.webkit"
+  ],
+  "last_comparison": "2026-01-21T18:30:00Z",
+  "comparison_source": "iOS Simulator (iPhone 15 Pro, iOS 18.3)",
+  "summary": {
+    "total_properties": 89,
+    "matches": 53,
+    "differences": 36,
+    "critical_fixes": [
+      "Touch events (TouchEvent, ontouchstart, maxTouchPoints)",
+      "Media queries (hover, pointer for touch devices)",
+      "WebGL renderer/vendor (Apple GPU vs Intel)",
+      "SharedArrayBuffer presence",
+      "window.webkit detection"
+    ],
+    "environment_dependent": [
+      "screen dimensions",
+      "window dimensions",
+      "voices count and list",
+      "user agent version"
+    ]
+  }
+}
