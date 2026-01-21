@@ -1,11 +1,20 @@
 import time
+import argparse
+import json
 
 from camoufox import Camoufox, DefaultAddons
 
 # Change this to your actual .app binary:
 EXEC = "dist/Camoufox.app/Contents/MacOS/camoufox"  # not the .app folder
 
-config = {
+# Parse command line arguments
+parser = argparse.ArgumentParser(description='Run Camoufox with a fingerprint config')
+parser.add_argument('--config', '-c', type=str, help='Path to JSON config file')
+parser.add_argument('--url', '-u', type=str, default='https://pixelscan.net/fingerprint-check', help='URL to navigate to')
+args = parser.parse_args()
+
+# Default config (used if no --config provided)
+default_config = {
     # Navigator
     "navigator.userAgent": "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.1 Mobile/15E148 Safari/604.1",
     "navigator.appCodeName": "Mozilla",
@@ -292,6 +301,16 @@ config = {
     # Canvas Fingerprints
 }
 
+# Load config from file if provided, otherwise use default
+if args.config:
+    print(f"Loading config from: {args.config}")
+    with open(args.config, 'r') as f:
+        config = json.load(f)
+    print(f"Loaded {len(config)} config properties")
+else:
+    print("Using default config")
+    config = default_config
+
 with Camoufox(
     executable_path=EXEC,
     ff_version=144,  # matches your 142.x build
@@ -301,5 +320,6 @@ with Camoufox(
     config=config,
 ) as browser:
     page = browser.new_page()
-    page.goto("https://pixelscan.net/fingerprint-check")
-    time.sleep(1000000)  # import time
+    page.goto(args.url)
+    print(f"Navigated to: {args.url}")
+    time.sleep(1000000)

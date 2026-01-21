@@ -2180,6 +2180,45 @@
       };
     }
 
+    async asyncGenerate() {
+      const result = this.generate();
+      const asyncDetection = result.asyncDetection || {};
+
+      const [
+        userAgentClientHints,
+        webRTCLocalIP,
+        webOSInfo,
+        cookieDeprecationLabel,
+        voices,
+      ] = await Promise.all([
+        asyncDetection.userAgentClientHints
+          ? asyncDetection.userAgentClientHints.catch(() => null)
+          : this.browser.getUserAgentClientHints().catch(() => null),
+        asyncDetection.webRTCLocalIP
+          ? asyncDetection.webRTCLocalIP.catch(() => null)
+          : this.browser.getWebRTCLocalIP().catch(() => null),
+        asyncDetection.webOSInfo
+          ? asyncDetection.webOSInfo.catch(() => null)
+          : this.browser.getWebOSInfo().catch(() => null),
+        asyncDetection.cookieDeprecationLabel
+          ? asyncDetection.cookieDeprecationLabel.catch(() => null)
+          : this.browser.getCookieDeprecationLabel().catch(() => null),
+        this.browser.getSpeechVoicesAsync
+          ? this.browser.getSpeechVoicesAsync().catch(() => ({ count: 0, list: [] }))
+          : Promise.resolve({ count: 0, list: [] }),
+      ]);
+
+      result.asyncDetection = {
+        userAgentClientHints,
+        webRTCLocalIP,
+        webOSInfo,
+        cookieDeprecationLabel,
+        voices,
+      };
+
+      return result;
+    }
+
     // Field implementations
     _getUrlChangeFlag() {
       const docRef = (this.win.document.referrer || "").replace(/\/$/, "");
@@ -3255,6 +3294,10 @@
 
     generate: function (options) {
       return new BrowserInfoGenerator(options).generate();
+    },
+
+    asyncGenerate: async function (options) {
+      return new BrowserInfoGenerator(options).asyncGenerate();
     },
 
     getFingerprint: function () {

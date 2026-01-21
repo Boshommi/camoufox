@@ -2,13 +2,21 @@
 
 import { useState, useCallback } from "react";
 import { api } from "~/trpc/react";
-import { DETECTOR_VERSION } from "~/lib/fingerprint-detector";
+import { DETECTOR_VERSION } from "~/lib/fingerprint-collector";
 import { toPythonDict, toJSON } from "~/lib/config-formatter";
+import {
+  type DeviceType,
+  DEVICE_TYPE_LABELS,
+  getAvailableDeviceTypes,
+} from "~/lib/device-profiles";
 
 export default function ProfilesPage() {
   const [copied, setCopied] = useState<string | null>(null);
   const [outputFormat, setOutputFormat] = useState<"python" | "json">("python");
   const [expandedProfile, setExpandedProfile] = useState<string | null>(null);
+  const [deviceType, setDeviceType] = useState<DeviceType | "none">("none");
+
+  const deviceTypes = getAvailableDeviceTypes();
 
   const { data: profiles, isLoading, refetch } = api.profile.list.useQuery();
 
@@ -21,7 +29,10 @@ export default function ProfilesPage() {
   });
 
   const getProfileConfig = api.profile.getConfig.useQuery(
-    { name: expandedProfile || "" },
+    {
+      name: expandedProfile || "",
+      deviceType: deviceType !== "none" ? deviceType : undefined,
+    },
     { enabled: !!expandedProfile }
   );
 
@@ -31,6 +42,7 @@ export default function ProfilesPage() {
     async (profileName: string) => {
       const configData = await utils.profile.getConfig.fetch({
         name: profileName,
+        deviceType: deviceType !== "none" ? deviceType : undefined,
       });
 
       if (!configData) return;
@@ -55,7 +67,7 @@ export default function ProfilesPage() {
         setTimeout(() => setCopied(null), 2000);
       }
     },
-    [outputFormat, utils]
+    [outputFormat, deviceType, utils]
   );
 
   const formatDate = (date: Date) => {
@@ -79,6 +91,21 @@ export default function ProfilesPage() {
             </p>
           </div>
           <div className="flex items-center gap-4">
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-gray-400">Device Profile:</span>
+              <select
+                value={deviceType}
+                onChange={(e) => setDeviceType(e.target.value as DeviceType | "none")}
+                className="bg-gray-700 rounded px-2 py-1 text-sm"
+              >
+                <option value="none">None (raw)</option>
+                {deviceTypes.map((type) => (
+                  <option key={type} value={type}>
+                    {DEVICE_TYPE_LABELS[type]}
+                  </option>
+                ))}
+              </select>
+            </div>
             <div className="flex items-center gap-2">
               <span className="text-sm text-gray-400">Format:</span>
               <select

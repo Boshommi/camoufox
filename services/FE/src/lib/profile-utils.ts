@@ -3,7 +3,7 @@
  * Auto-naming and validation functions for fingerprint profiles
  */
 
-import type { CamoufoxConfig } from "./fingerprint-detector";
+import type { CamoufoxConfig } from "./fingerprint-collector";
 
 /**
  * Generate a 4-character hash from fingerprint config

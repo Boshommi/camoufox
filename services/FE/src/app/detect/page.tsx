@@ -1,22 +1,38 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useMemo } from "react";
 import {
-  detectAll,
+  collectAll,
   type CamoufoxConfig,
-  type DetectionResult,
-} from "~/lib/fingerprint-detector";
+  type CollectionResult,
+} from "~/lib/fingerprint-collector";
 import { toPythonDict, toJSON, getConfigStats } from "~/lib/config-formatter";
+import {
+  type DeviceType,
+  DEVICE_TYPE_LABELS,
+  getAvailableDeviceTypes,
+  mergeWithDeviceProfile,
+} from "~/lib/device-profiles";
 
 type DetectionStatus = "idle" | "detecting" | "done" | "error";
 
 export default function DetectPage() {
   const [status, setStatus] = useState<DetectionStatus>("idle");
-  const [result, setResult] = useState<DetectionResult | null>(null);
+  const [result, setResult] = useState<CollectionResult | null>(null);
   const [copied, setCopied] = useState(false);
   const [outputFormat, setOutputFormat] = useState<"python" | "json">("python");
   const [skipGeolocation, setSkipGeolocation] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [deviceType, setDeviceType] = useState<DeviceType | "none">("none");
+
+  const deviceTypes = getAvailableDeviceTypes();
+
+  // Compute the final config with device profile applied
+  const finalConfig = useMemo(() => {
+    if (!result) return null;
+    if (deviceType === "none") return result.config;
+    return mergeWithDeviceProfile(result.config, deviceType);
+  }, [result, deviceType]);
 
   const runDetection = useCallback(async () => {
     setStatus("detecting");
@@ -24,7 +40,9 @@ export default function DetectPage() {
     setCopied(false);
 
     try {
-      const detection = await detectAll({ skipGeolocation });
+      const detection = await collectAll({
+        skipGeolocation,
+      });
       setResult(detection);
       setStatus("done");
     } catch (e) {
@@ -34,13 +52,13 @@ export default function DetectPage() {
   }, [skipGeolocation]);
 
   const getFormattedOutput = useCallback(() => {
-    if (!result) return "";
+    if (!finalConfig) return "";
 
     if (outputFormat === "python") {
-      return toPythonDict(result.config, { includeComments: true });
+      return toPythonDict(finalConfig, { includeComments: true });
     }
-    return toJSON(result.config, true);
-  }, [result, outputFormat]);
+    return toJSON(finalConfig, true);
+  }, [finalConfig, outputFormat]);
 
   const copyToClipboard = useCallback(async () => {
     const output = getFormattedOutput();
@@ -61,7 +79,7 @@ export default function DetectPage() {
     }
   }, [getFormattedOutput]);
 
-  const stats = result ? getConfigStats(result.config) : null;
+  const stats = finalConfig ? getConfigStats(finalConfig) : null;
 
   return (
     <div className="min-h-screen bg-gray-900 text-gray-100 p-6">
@@ -124,6 +142,24 @@ export default function DetectPage() {
             {result && (
               <>
                 <div className="flex items-center gap-2 ml-auto">
+                  <span className="text-sm text-gray-400">Device Profile:</span>
+                  <select
+                    value={deviceType}
+                    onChange={(e) =>
+                      setDeviceType(e.target.value as DeviceType | "none")
+                    }
+                    className="bg-gray-700 rounded px-2 py-1 text-sm"
+                  >
+                    <option value="none">None (raw fingerprint)</option>
+                    {deviceTypes.map((type) => (
+                      <option key={type} value={type}>
+                        {DEVICE_TYPE_LABELS[type]}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="flex items-center gap-2">
                   <span className="text-sm text-gray-400">Format:</span>
                   <select
                     value={outputFormat}
@@ -205,6 +241,48 @@ export default function DetectPage() {
                 </div>
               )}
 
+              {/* Fingerprint Hash */}
+              {result.browserInfo && (
+                <div className="bg-gray-800 rounded-lg p-4 mb-4">
+                  <h2 className="text-lg font-semibold mb-3 text-purple-400">
+                    Fingerprint Hash
+                  </h2>
+                  <div className="font-mono text-xs text-gray-300 break-all">
+                    {result.browserInfo.fingerprint.slice(0, 64)}...
+                  </div>
+                  <div className="mt-2 text-xs text-gray-500">
+                    Unique hash from {Object.keys(result.browserInfo.fingerprintComponents).length} components
+                  </div>
+                </div>
+              )}
+
+              {/* Async Detection Info */}
+              {result.asyncData && (
+                <div className="bg-gray-800 rounded-lg p-4 mb-4">
+                  <h2 className="text-lg font-semibold mb-3 text-cyan-400">
+                    Async Detection
+                  </h2>
+                  <div className="space-y-2 text-sm">
+                    <div className="flex justify-between">
+                      <span className="text-gray-400">Voices:</span>
+                      <span className="text-gray-200">{result.asyncData.voices?.count ?? 0}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-400">Client Hints:</span>
+                      <span className="text-gray-200">
+                        {result.asyncData.userAgentClientHints ? "Available" : "N/A"}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-400">WebRTC IP:</span>
+                      <span className="text-gray-200">
+                        {result.asyncData.webRTCLocalIP || "Hidden"}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {/* Not Detected Notice */}
               <div className="bg-gray-800 rounded-lg p-4">
                 <h2 className="text-lg font-semibold mb-3 text-orange-400">
@@ -258,16 +336,27 @@ export default function DetectPage() {
         )}
 
         {/* Property Reference */}
-        {status === "done" && result && (
+        {status === "done" && finalConfig && (
           <div className="mt-6 bg-gray-800 rounded-lg p-4">
-            <h2 className="text-lg font-semibold mb-3">Quick Property Reference</h2>
+            <h2 className="text-lg font-semibold mb-3">
+              Quick Property Reference
+              {deviceType !== "none" && (
+                <span className="ml-2 text-sm font-normal text-blue-400">
+                  (with {DEVICE_TYPE_LABELS[deviceType]} profile)
+                </span>
+              )}
+            </h2>
             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2 text-xs font-mono">
-              {Object.keys(result.config)
+              {Object.keys(finalConfig)
                 .sort()
                 .map((key) => (
                   <div
                     key={key}
-                    className="bg-gray-900 rounded px-2 py-1 truncate"
+                    className={`rounded px-2 py-1 truncate ${
+                      key.endsWith(":hide")
+                        ? "bg-yellow-900/50 text-yellow-300"
+                        : "bg-gray-900"
+                    }`}
                     title={key}
                   >
                     {key}

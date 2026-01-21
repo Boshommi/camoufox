@@ -3,7 +3,7 @@
  * Formats fingerprint config as Python dict or JSON
  */
 
-import type { CamoufoxConfig } from "./fingerprint-detector";
+import type { CamoufoxConfig } from "./fingerprint-collector";
 
 /**
  * Format a JavaScript value as a Python literal

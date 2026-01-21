@@ -3,11 +3,26 @@
 Fingerprint Comparison Script for Camoufox
 
 Compares fingerprints between:
-1. Real iOS Safari (via iOS Simulator + Appium)
+1. Real iOS Safari (via iOS Simulator + Appium) or Playwright WebKit
 2. Spoofed Camoufox (via Playwright Firefox driver)
 
+Key feature: DYNAMIC CONFIG GENERATION
+By default, this script collects fingerprint from real Safari and dynamically
+generates a Camoufox config from that data. This ensures the spoofed browser
+always matches what the real browser reports, without manual maintenance.
+
 Usage:
-    python3 scripts/fp-compare.py [--real-only] [--spoofed-only] [--output path]
+    # Default: dynamic config from real Safari
+    python3 scripts/fp-compare.py --use-webkit --headful
+
+    # With config file output for inspection
+    python3 scripts/fp-compare.py --use-webkit --headful --save-config /tmp/config.json
+
+    # Use static hardcoded config instead
+    python3 scripts/fp-compare.py --use-webkit --headful --static-config
+
+    # Just collect real fingerprint
+    python3 scripts/fp-compare.py --real-only --use-webkit
 """
 
 import argparse
@@ -20,7 +35,7 @@ from typing import Any, Dict
 # Paths
 SCRIPT_DIR = Path(__file__).parent.absolute()
 PROJECT_ROOT = SCRIPT_DIR.parent
-DETECTOR_JS = PROJECT_ROOT / "services" / "browser-info-generator.js"  # Use browser-info-generator
+DETECTOR_JS = PROJECT_ROOT / "services" / "FE" / "public" / "browser-info-generator.js"  # Use browser-info-generator
 OUTPUT_DIR = PROJECT_ROOT / ".planning" / "fp"
 COMPARISON_FILE = OUTPUT_DIR / "comparison.json"
 
@@ -72,11 +87,51 @@ SAFARI_IOS_CONFIG = {
     "window.SharedArrayBuffer:hide": True,
 
     # WebGL spoofing for Safari (using numeric parameter keys)
-    # GL_VENDOR = 7937, GL_RENDERER = 7936
+    # GL_VENDOR = 0x1F00 = 7936, GL_RENDERER = 0x1F01 = 7937
+    # UNMASKED_VENDOR_WEBGL = 0x9245 = 37445, UNMASKED_RENDERER_WEBGL = 0x9246 = 37446
+    # SHADING_LANGUAGE_VERSION = 0x8B8C = 35724
     "webGl:parameters": {
-        "7937": "WebKit",        # GL_VENDOR
-        "7936": "WebKit WebGL",  # GL_RENDERER
+        "7936": "WebKit",                        # GL_VENDOR
+        "7937": "WebKit WebGL",                  # GL_RENDERER
+        "37445": "Apple Inc.",                   # UNMASKED_VENDOR_WEBGL
+        "37446": "Apple GPU",                    # UNMASKED_RENDERER_WEBGL
+        "35724": "WebGL GLSL ES 1.0 (1.0)",      # SHADING_LANGUAGE_VERSION
     },
+
+    # WebGL extensions list for iOS Safari
+    "webGl:supportedExtensions": [
+        "ANGLE_instanced_arrays",
+        "EXT_blend_minmax",
+        "EXT_clip_control",
+        "EXT_color_buffer_half_float",
+        "EXT_depth_clamp",
+        "EXT_frag_depth",
+        "EXT_polygon_offset_clamp",
+        "EXT_sRGB",
+        "EXT_shader_texture_lod",
+        "EXT_texture_filter_anisotropic",
+        "EXT_texture_mirror_clamp_to_edge",
+        "KHR_parallel_shader_compile",
+        "OES_element_index_uint",
+        "OES_fbo_render_mipmap",
+        "OES_standard_derivatives",
+        "OES_texture_float",
+        "OES_texture_half_float",
+        "OES_texture_half_float_linear",
+        "OES_vertex_array_object",
+        "WEBGL_blend_func_extended",
+        "WEBGL_color_buffer_float",
+        "WEBGL_compressed_texture_astc",
+        "WEBGL_compressed_texture_etc",
+        "WEBGL_compressed_texture_etc1",
+        "WEBGL_debug_renderer_info",
+        "WEBGL_debug_shaders",
+        "WEBGL_depth_texture",
+        "WEBGL_draw_buffers",
+        "WEBGL_lose_context",
+        "WEBGL_multi_draw",
+        "WEBGL_polygon_mode",
+    ],
 
     # Screen dimensions (iPhone 15 Pro)
     "screen.width": 393,
@@ -169,6 +224,204 @@ SAFARI_MACOS_CONFIG = {
 
 # Default config (iOS Safari)
 SAFARI_CONFIG = SAFARI_IOS_CONFIG
+
+
+def convert_fingerprint_to_config(fingerprint_result: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Convert collected fingerprint data to Camoufox config format.
+
+    This dynamically generates a Camoufox config from real Safari fingerprint data,
+    ensuring the spoofed browser matches what was actually collected from the real browser.
+
+    Based on: services/FE/src/lib/fingerprint-collector.ts (convertToCamoufoxConfig)
+    """
+    fp = fingerprint_result.get('config', {})
+    config: Dict[str, Any] = {}
+
+    # ============================================
+    # 1. Navigator properties (direct mappings)
+    # ============================================
+    navigator_props = [
+        'navigator.userAgent',
+        'navigator.appCodeName',
+        'navigator.appName',
+        'navigator.appVersion',
+        'navigator.language',
+        'navigator.languages',
+        'navigator.platform',
+        'navigator.product',
+        'navigator.productSub',
+        'navigator.vendor',
+        'navigator.vendorSub',
+        'navigator.webdriver',
+        'navigator.cookieEnabled',
+        'navigator.hardwareConcurrency',
+        'navigator.maxTouchPoints',
+    ]
+    for prop in navigator_props:
+        if prop in fp and fp[prop] is not None:
+            config[prop] = fp[prop]
+
+    # ============================================
+    # 2. Screen properties (direct mappings)
+    # ============================================
+    screen_props = [
+        'screen.width',
+        'screen.height',
+        'screen.availWidth',
+        'screen.availHeight',
+        'screen.availTop',
+        'screen.availLeft',
+        'screen.colorDepth',
+        'screen.pixelDepth',
+    ]
+    for prop in screen_props:
+        if prop in fp and fp[prop] is not None:
+            config[prop] = fp[prop]
+
+    # ============================================
+    # 3. Window properties (direct mappings)
+    # ============================================
+    window_props = [
+        'window.innerWidth',
+        'window.innerHeight',
+        'window.outerWidth',
+        'window.outerHeight',
+        'window.screenX',
+        'window.screenY',
+        'window.devicePixelRatio',
+    ]
+    for prop in window_props:
+        if prop in fp and fp[prop] is not None:
+            config[prop] = fp[prop]
+
+    # ============================================
+    # 4. Touch support
+    # ============================================
+    # Use touch.TouchEvent from collected data
+    if 'touch.TouchEvent' in fp:
+        config['window.TouchEvent'] = fp['touch.TouchEvent']
+
+    # ============================================
+    # 5. WebGL parameters (decimal string keys)
+    # ============================================
+    # GL_VENDOR = 7936, GL_RENDERER = 7937
+    # UNMASKED_VENDOR_WEBGL = 37445, UNMASKED_RENDERER_WEBGL = 37446
+    # SHADING_LANGUAGE_VERSION = 35724
+    webgl_params = {}
+
+    if fp.get('webgl.vendor'):
+        webgl_params['7936'] = fp['webgl.vendor']  # GL_VENDOR
+    if fp.get('webgl.renderer'):
+        webgl_params['7937'] = fp['webgl.renderer']  # GL_RENDERER
+    if fp.get('webgl.unmaskedVendor'):
+        webgl_params['37445'] = fp['webgl.unmaskedVendor']  # UNMASKED_VENDOR
+    if fp.get('webgl.unmaskedRenderer'):
+        webgl_params['37446'] = fp['webgl.unmaskedRenderer']  # UNMASKED_RENDERER
+    if fp.get('webgl.shadingLanguageVersion'):
+        webgl_params['35724'] = fp['webgl.shadingLanguageVersion']  # SHADING_LANGUAGE_VERSION
+    if fp.get('webgl.version'):
+        webgl_params['7938'] = fp['webgl.version']  # GL_VERSION
+
+    if webgl_params:
+        config['webGl:parameters'] = webgl_params
+
+    # WebGL extensions
+    if fp.get('webgl.extensions'):
+        config['webGl:supportedExtensions'] = fp['webgl.extensions']
+
+    # ============================================
+    # 6. Hide Firefox-specific APIs (Safari doesn't have these)
+    # ============================================
+    # Only hide if the property is undefined/null in the real browser
+    if fp.get('navigator.buildID') is None:
+        config['navigator.buildID:hide'] = True
+    if fp.get('navigator.oscpu') is None:
+        config['navigator.oscpu:hide'] = True
+    if fp.get('navigator.doNotTrack') is None:
+        config['navigator.doNotTrack:hide'] = True
+    if fp.get('navigator.globalPrivacyControl') is None:
+        config['navigator.globalPrivacyControl:hide'] = True
+
+    # Firefox APIs that Safari never has
+    config['navigator.getBattery:hide'] = True
+    config['navigator.connection:hide'] = True
+    config['window.InstallTrigger:hide'] = True
+
+    # ============================================
+    # 7. Browser-specific window objects
+    # ============================================
+    # Map from collected boolean values
+    if 'window.webkit' in fp:
+        config['window.webkit'] = fp['window.webkit']
+    if 'window.safari' in fp:
+        config['window.safari'] = fp['window.safari']
+    if 'window.chrome' in fp:
+        config['window.chrome'] = fp['window.chrome']
+
+    # ============================================
+    # 8. SharedArrayBuffer (Safari often doesn't have it)
+    # ============================================
+    if not fp.get('hasSharedArrayBuffer', False):
+        config['window.SharedArrayBuffer:hide'] = True
+
+    # ============================================
+    # 9. Media queries (critical for touch device detection)
+    # ============================================
+    # hover: hover vs none
+    if fp.get('mediaQuery.hoverNone'):
+        config['mediaQuery:hover'] = 'none'
+    elif fp.get('mediaQuery.hoverHover'):
+        config['mediaQuery:hover'] = 'hover'
+
+    # pointer: fine vs coarse
+    if fp.get('mediaQuery.pointerCoarse'):
+        config['mediaQuery:pointer'] = 'coarse'
+    elif fp.get('mediaQuery.pointerFine'):
+        config['mediaQuery:pointer'] = 'fine'
+
+    # any-hover
+    if fp.get('mediaQuery.anyHoverNone'):
+        config['mediaQuery:any-hover'] = 'none'
+    elif fp.get('mediaQuery.anyHoverHover'):
+        config['mediaQuery:any-hover'] = 'hover'
+
+    # any-pointer
+    if fp.get('mediaQuery.anyPointerCoarse'):
+        config['mediaQuery:any-pointer'] = 'coarse'
+    elif fp.get('mediaQuery.anyPointerFine'):
+        config['mediaQuery:any-pointer'] = 'fine'
+
+    # ============================================
+    # 10. Voices (speech synthesis)
+    # ============================================
+    voices_list = fp.get('voices.list', [])
+    if voices_list:
+        config['voices'] = [
+            {
+                'name': v.get('name', ''),
+                'lang': v.get('lang', ''),
+                'uri': v.get('voiceURI', ''),
+                'isDefault': v.get('default', False),
+                'isLocal': v.get('localService', True),
+            }
+            for v in voices_list
+        ]
+    else:
+        # Safari on data: URLs returns empty voices
+        config['voices'] = []
+
+    # Block undefined voices to match Safari behavior
+    config['voices:blockIfNotDefined'] = True
+
+    # ============================================
+    # 11. userAgentData (Safari doesn't have this)
+    # ============================================
+    # Check if the real browser has userAgentData
+    has_uad = fp.get('async.userAgentClientHints') is not None
+    config['navigator.userAgentData'] = has_uad
+
+    return config
 
 
 def load_detector_js() -> str:
@@ -357,6 +610,23 @@ def run_detector_in_browser(page, detector_js: str) -> Dict[str, Any]:
                 fingerprintHash: collector.generateFingerprintHash()
             };
 
+            // Add component hashes and raw values to config for comparison
+            for (const [name, fp] of Object.entries(syncFP)) {
+                if (fp && typeof fp === 'object') {
+                    if (fp.hash !== undefined) {
+                        params['component.' + name + '.hash'] = fp.hash;
+                    }
+                    if (fp.rawValue !== undefined) {
+                        // Truncate very long rawValues to avoid memory issues
+                        const raw = String(fp.rawValue);
+                        params['component.' + name + '.rawValue'] = raw.length > 5000 ? raw.substring(0, 5000) + '...[truncated]' : raw;
+                    }
+                    if (fp.name !== undefined) {
+                        params['component.' + name + '.name'] = fp.name;
+                    }
+                }
+            }
+
             // Async fingerprints
             const asyncFP = await window.YandexBrowserInfo.getAsyncDetection();
 
@@ -390,13 +660,28 @@ def run_detector_in_browser(page, detector_js: str) -> Dict[str, Any]:
 def get_spoofed_fingerprint(
     exec_path: str = None,
     config: Dict[str, Any] = None,
-    headless: bool = True
+    headless: bool = True,
+    dynamic_config_from: Dict[str, Any] = None,
 ) -> Dict[str, Any]:
-    """Get fingerprint from Camoufox (spoofed browser)."""
+    """
+    Get fingerprint from Camoufox (spoofed browser).
+
+    Args:
+        exec_path: Path to Camoufox executable
+        config: Static config to use (ignored if dynamic_config_from is provided)
+        headless: Whether to run headless
+        dynamic_config_from: Fingerprint result from real browser to generate config from
+    """
     from camoufox import Camoufox, DefaultAddons
 
     exec_path = exec_path or str(DEFAULT_CAMOUFOX_EXEC)
-    config = config or SAFARI_CONFIG
+
+    # Generate config dynamically if fingerprint result provided
+    if dynamic_config_from is not None:
+        config = convert_fingerprint_to_config(dynamic_config_from)
+        print(f"  Generated dynamic config with {len(config)} properties")
+    elif config is None:
+        config = SAFARI_CONFIG
 
     if not Path(exec_path).exists():
         raise FileNotFoundError(f"Camoufox executable not found at {exec_path}")
@@ -632,6 +917,44 @@ def get_real_safari_fingerprint(
                         params['platform.' + key] = platformAPIs[key];
                     }
 
+                    // Collect sync fingerprints with hashes and raw values
+                    var syncFP = {
+                        canvas: collector.getCanvasFingerprint(),
+                        audio: collector.getAudioFingerprint(),
+                        fonts: collector.getFontFingerprint(),
+                        plugins: collector.getPluginFingerprint(),
+                        navigator: collector.getNavigatorFingerprint(),
+                        voices: collector.getSpeechVoicesFingerprint(),
+                        touch: collector.getTouchFingerprint(),
+                        mediaQueries: collector.getMediaQueriesFingerprint(),
+                        gamepad: collector.getGamepadFingerprint(),
+                        mediaCodec: collector.getMediaCodecFingerprint(),
+                        jsHeapLimit: collector.getJsHeapSizeLimitFingerprint(),
+                        screenAvailable: collector.getScreenAvailableFingerprint(),
+                        doNotTrack: collector.getDoNotTrackFingerprint(),
+                        webgl: collector.getWebGLFingerprint(),
+                        fullFingerprint: collector.generateFullFingerprint(),
+                        fingerprintHash: collector.generateFingerprintHash()
+                    };
+
+                    // Add component hashes and raw values to params for comparison
+                    for (var name in syncFP) {
+                        var fp = syncFP[name];
+                        if (fp && typeof fp === 'object') {
+                            if (fp.hash !== undefined) {
+                                params['component.' + name + '.hash'] = fp.hash;
+                            }
+                            if (fp.rawValue !== undefined) {
+                                // Truncate very long rawValues to avoid memory issues
+                                var raw = String(fp.rawValue);
+                                params['component.' + name + '.rawValue'] = raw.length > 5000 ? raw.substring(0, 5000) + '...[truncated]' : raw;
+                            }
+                            if (fp.name !== undefined) {
+                                params['component.' + name + '.name'] = fp.name;
+                            }
+                        }
+                    }
+
                     // Use getAsyncDetection() for all async data (voices, clientHints, webRTC, etc.)
                     window.YandexBrowserInfo.getAsyncDetection().then(function(asyncData) {
                         // Add async detection results
@@ -811,6 +1134,104 @@ def get_real_safari_fingerprint(
                     // Performance memory
                     params['performance.memory.jsHeapSizeLimit'] = (performance.memory ? performance.memory.jsHeapSizeLimit : null);
 
+                    // Inline component fingerprint collection (fallback when YandexBrowserInfo unavailable)
+                    // Canvas fingerprint
+                    try {
+                        var canvasEl = document.createElement('canvas');
+                        canvasEl.width = 280; canvasEl.height = 60;
+                        var ctx = canvasEl.getContext('2d');
+                        ctx.fillStyle = 'rgb(102, 204, 0)';
+                        ctx.fillRect(0, 0, 280, 60);
+                        ctx.fillStyle = '#f60';
+                        ctx.font = '18pt Arial';
+                        ctx.fillText('Cwm fjordbank glyphs vext quiz', 2, 20);
+                        ctx.fillStyle = 'rgba(102, 204, 170, 0.7)';
+                        ctx.fillText('Cwm fjordbank glyphs vext quiz', 4, 40);
+                        ctx.strokeStyle = 'rgb(120, 186, 176)';
+                        ctx.arc(50, 50, 15, 0, Math.PI * 2, true);
+                        ctx.stroke();
+                        params['component.canvas.rawValue'] = canvasEl.toDataURL();
+                    } catch(e) { params['component.canvas.rawValue'] = 'error:' + e.toString(); }
+
+                    // Navigator fingerprint
+                    var navProps = ['userAgent', 'language', 'languages', 'platform', 'hardwareConcurrency',
+                                    'cookieEnabled', 'doNotTrack', 'maxTouchPoints', 'vendor', 'appVersion'];
+                    var navRaw = navProps.map(function(p) {
+                        var val = navigator[p];
+                        if (Array.isArray(val)) val = val.join(',');
+                        return p + ':' + val;
+                    }).join('|');
+                    params['component.navigator.rawValue'] = navRaw;
+
+                    // WebGL fingerprint
+                    try {
+                        var glCanvas = document.createElement('canvas');
+                        var glCtx = glCanvas.getContext('webgl') || glCanvas.getContext('experimental-webgl');
+                        if (glCtx) {
+                            var webglRaw = [];
+                            webglRaw.push('vendor:' + glCtx.getParameter(glCtx.VENDOR));
+                            webglRaw.push('renderer:' + glCtx.getParameter(glCtx.RENDERER));
+                            webglRaw.push('version:' + glCtx.getParameter(glCtx.VERSION));
+                            webglRaw.push('shadingLanguageVersion:' + glCtx.getParameter(glCtx.SHADING_LANGUAGE_VERSION));
+                            var dbgInfo = glCtx.getExtension('WEBGL_debug_renderer_info');
+                            if (dbgInfo) {
+                                webglRaw.push('unmaskedVendor:' + glCtx.getParameter(dbgInfo.UNMASKED_VENDOR_WEBGL));
+                                webglRaw.push('unmaskedRenderer:' + glCtx.getParameter(dbgInfo.UNMASKED_RENDERER_WEBGL));
+                            }
+                            var exts = glCtx.getSupportedExtensions();
+                            webglRaw.push('extensions:' + (exts ? exts.sort().join(',') : ''));
+                            params['component.webgl.rawValue'] = webglRaw.join('|');
+                        }
+                    } catch(e) { params['component.webgl.rawValue'] = 'error:' + e.toString(); }
+
+                    // Touch fingerprint
+                    var touchRaw = [];
+                    touchRaw.push('maxTouchPoints:' + (navigator.maxTouchPoints || 0));
+                    touchRaw.push('ontouchstart:' + ('ontouchstart' in window));
+                    touchRaw.push('TouchEvent:' + (typeof TouchEvent !== 'undefined'));
+                    params['component.touch.rawValue'] = touchRaw.join('|');
+
+                    // MediaQueries fingerprint
+                    var mqRaw = [];
+                    mqRaw.push('hover:' + (window.matchMedia('(hover: hover)').matches ? 'hover' : window.matchMedia('(hover: none)').matches ? 'none' : 'unknown'));
+                    mqRaw.push('pointer:' + (window.matchMedia('(pointer: fine)').matches ? 'fine' : window.matchMedia('(pointer: coarse)').matches ? 'coarse' : 'unknown'));
+                    mqRaw.push('colorScheme:' + (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'));
+                    mqRaw.push('reducedMotion:' + window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+                    params['component.mediaQueries.rawValue'] = mqRaw.join('|');
+
+                    // Screen available fingerprint
+                    params['component.screenAvailable.rawValue'] = 'availWidth:' + screen.availWidth + '|availHeight:' + screen.availHeight + '|availLeft:' + screen.availLeft + '|availTop:' + screen.availTop;
+
+                    // DoNotTrack fingerprint
+                    params['component.doNotTrack.rawValue'] = 'doNotTrack:' + navigator.doNotTrack + '|globalPrivacyControl:' + navigator.globalPrivacyControl;
+
+                    // Plugins fingerprint
+                    var pluginNames = [];
+                    if (navigator.plugins) {
+                        for (var pi = 0; pi < navigator.plugins.length; pi++) {
+                            pluginNames.push(navigator.plugins[pi].name);
+                        }
+                    }
+                    params['component.plugins.rawValue'] = 'count:' + (navigator.plugins ? navigator.plugins.length : 0) + '|names:' + pluginNames.join(',');
+
+                    // JsHeapLimit fingerprint
+                    params['component.jsHeapLimit.rawValue'] = 'jsHeapSizeLimit:' + (performance.memory ? performance.memory.jsHeapSizeLimit : 'null');
+
+                    // Audio fingerprint (simplified - actual fingerprint requires AudioContext processing)
+                    try {
+                        var audioCtx = window.AudioContext || window.webkitAudioContext;
+                        params['component.audio.rawValue'] = 'hasAudioContext:' + (!!audioCtx) + '|sampleRate:' + (audioCtx ? (new audioCtx()).sampleRate : 'null');
+                    } catch(e) { params['component.audio.rawValue'] = 'error:' + e.toString(); }
+
+                    // Fonts fingerprint (simplified - actual detection requires more complex probing)
+                    params['component.fonts.rawValue'] = 'placeholder:true';
+
+                    // Gamepad fingerprint
+                    params['component.gamepad.rawValue'] = 'hasGamepadAPI:' + (!!navigator.getGamepads);
+
+                    // MediaCodec fingerprint (simplified)
+                    params['component.mediaCodec.rawValue'] = 'hasMediaCapabilities:' + (!!navigator.mediaCapabilities);
+
                     // Voices with async loading
                     var synthesis = window.speechSynthesis;
                     if (synthesis && synthesis.getVoices) {
@@ -953,6 +1374,48 @@ def compare_fingerprints(
                 "value": spoofed_config[key]
             })
 
+    # Group component differences for easier analysis
+    component_diffs = {}
+    for diff in differences:
+        if diff['key'].startswith('component.'):
+            parts = diff['key'].split('.')
+            if len(parts) >= 3:
+                comp_name = parts[1]
+                field = parts[2]
+                if comp_name not in component_diffs:
+                    component_diffs[comp_name] = {}
+                component_diffs[comp_name][field] = {
+                    "real": diff["real"],
+                    "spoofed": diff["spoofed"]
+                }
+
+    # Also include only_real and only_spoofed component fields
+    for item in only_real:
+        if item['key'].startswith('component.'):
+            parts = item['key'].split('.')
+            if len(parts) >= 3:
+                comp_name = parts[1]
+                field = parts[2]
+                if comp_name not in component_diffs:
+                    component_diffs[comp_name] = {}
+                component_diffs[comp_name][field] = {
+                    "real": item["value"],
+                    "spoofed": None
+                }
+
+    for item in only_spoofed:
+        if item['key'].startswith('component.'):
+            parts = item['key'].split('.')
+            if len(parts) >= 3:
+                comp_name = parts[1]
+                field = parts[2]
+                if comp_name not in component_diffs:
+                    component_diffs[comp_name] = {}
+                component_diffs[comp_name][field] = {
+                    "real": None,
+                    "spoofed": item["value"]
+                }
+
     return {
         "summary": {
             "total_keys": len(all_keys),
@@ -960,11 +1423,13 @@ def compare_fingerprints(
             "differences": len(differences),
             "only_in_real": len(only_real),
             "only_in_spoofed": len(only_spoofed),
+            "component_count": len(component_diffs),
         },
         "differences": differences,
         "only_in_real": only_real,
         "only_in_spoofed": only_spoofed,
         "matches": matches,
+        "component_differences": component_diffs,
         "metadata": {
             "real_unavailable": real.get("unavailable", []),
             "spoofed_unavailable": spoofed.get("unavailable", []),
@@ -1026,6 +1491,57 @@ def print_summary(comparison: Dict[str, Any]):
         for item in only_spoofed:
             print(f"  {item['key']}")
 
+    # Component breakdown
+    component_diffs = comparison.get("component_differences", {})
+    if component_diffs:
+        print("\n" + "-" * 60)
+        print("COMPONENT BREAKDOWN:")
+        print("-" * 60)
+        for comp_name in sorted(component_diffs.keys()):
+            fields = component_diffs[comp_name]
+
+            # Check if hash matches
+            hash_info = fields.get('hash', {})
+            hash_real = hash_info.get('real')
+            hash_spoofed = hash_info.get('spoofed')
+            hash_match = hash_real == hash_spoofed if hash_real is not None and hash_spoofed is not None else None
+
+            if hash_match is True:
+                status = "MATCH"
+            elif hash_match is False:
+                status = "DIFF"
+            else:
+                status = "????"
+
+            print(f"\n[{status}] {comp_name.upper()}:")
+
+            # Show hash
+            if 'hash' in fields:
+                h = fields['hash']
+                print(f"  Hash - Real: {h.get('real', 'N/A')}, Spoofed: {h.get('spoofed', 'N/A')}")
+
+            # Show rawValue (truncated)
+            if 'rawValue' in fields:
+                rv = fields['rawValue']
+                real_raw = str(rv.get('real', 'N/A'))
+                spoofed_raw = str(rv.get('spoofed', 'N/A'))
+
+                # Truncate for display
+                max_len = 100
+                if len(real_raw) > max_len:
+                    real_raw = real_raw[:max_len] + "..."
+                if len(spoofed_raw) > max_len:
+                    spoofed_raw = spoofed_raw[:max_len] + "..."
+
+                print(f"  Raw Value:")
+                print(f"    Real:    {real_raw}")
+                print(f"    Spoofed: {spoofed_raw}")
+
+            # Show name if present
+            if 'name' in fields:
+                n = fields['name']
+                print(f"  Name - Real: {n.get('real', 'N/A')}, Spoofed: {n.get('spoofed', 'N/A')}")
+
     print("\n" + "=" * 60)
 
 
@@ -1077,6 +1593,16 @@ def main():
         default="18.3",
         help="iOS version for simulator"
     )
+    parser.add_argument(
+        "--static-config",
+        action="store_true",
+        help="Use hardcoded static config instead of dynamic config from real Safari"
+    )
+    parser.add_argument(
+        "--save-config",
+        type=str,
+        help="Save generated config to JSON file for inspection"
+    )
 
     args = parser.parse_args()
 
@@ -1111,16 +1637,44 @@ def main():
     # Collect spoofed fingerprint
     if not args.real_only:
         print("\n[2/2] Collecting SPOOFED Camoufox fingerprint...")
-        # Use macOS config for webkit mode, iOS config otherwise
-        spoof_config = SAFARI_MACOS_CONFIG if args.use_webkit else SAFARI_IOS_CONFIG
-        print(f"  Using {'macOS' if args.use_webkit else 'iOS'} Safari config")
+
+        # Determine config mode
+        use_dynamic = not args.static_config and real_result and real_result.get('config')
+
+        if args.static_config:
+            # Static mode: use hardcoded config
+            spoof_config = SAFARI_MACOS_CONFIG if args.use_webkit else SAFARI_IOS_CONFIG
+            print(f"  Using STATIC {'macOS' if args.use_webkit else 'iOS'} Safari config")
+            dynamic_config_from = None
+        elif use_dynamic:
+            # Dynamic mode: generate config from real Safari fingerprint
+            print(f"  Using DYNAMIC config generated from real Safari fingerprint")
+            spoof_config = None  # Will be generated dynamically
+            dynamic_config_from = real_result
+        else:
+            # Fallback to static if no real fingerprint available
+            spoof_config = SAFARI_MACOS_CONFIG if args.use_webkit else SAFARI_IOS_CONFIG
+            print(f"  Using STATIC {'macOS' if args.use_webkit else 'iOS'} Safari config (no real fingerprint available)")
+            dynamic_config_from = None
+
         try:
             spoofed_result = get_spoofed_fingerprint(
                 exec_path=args.exec_path,
                 config=spoof_config,
-                headless=headless
+                headless=headless,
+                dynamic_config_from=dynamic_config_from,
             )
             print(f"  Collected {len(spoofed_result.get('config', {}))} properties")
+
+            # Save generated config if requested
+            if args.save_config and use_dynamic:
+                generated_config = convert_fingerprint_to_config(real_result)
+                save_path = Path(args.save_config)
+                save_path.parent.mkdir(parents=True, exist_ok=True)
+                with open(save_path, 'w') as f:
+                    json.dump(generated_config, f, indent=2, default=str)
+                print(f"  Saved generated config to: {save_path}")
+
         except Exception as e:
             print(f"  ERROR: {e}")
             spoofed_result = {"config": {}, "unavailable": [], "errors": [str(e)]}

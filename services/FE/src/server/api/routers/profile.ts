@@ -1,13 +1,21 @@
 import { z } from "zod";
 import type { Prisma } from "@prisma/client";
 import { createTRPCRouter, publicProcedure } from "~/server/api/trpc";
-import { DETECTOR_VERSION } from "~/lib/fingerprint-detector";
+import { DETECTOR_VERSION } from "~/lib/fingerprint-collector";
 import {
   generateProfileName,
   getProfileInfo,
   isValidProfileName,
   sanitizeProfileName,
 } from "~/lib/profile-utils";
+import {
+  type DeviceType,
+  DEVICE_TYPE_LABELS,
+  getAvailableDeviceTypes,
+  getDeviceProfile,
+  isValidDeviceType,
+  mergeWithDeviceProfile,
+} from "~/lib/device-profiles";
 
 const fingerprintConfigSchema = z.record(z.string(), z.unknown());
 
@@ -19,7 +27,29 @@ const canvasFingerprintSchema = z.object({
   dataURL: z.string(),
 });
 
+const deviceTypeSchema = z.enum(["ios-safari", "macos-safari", "android-chrome"]);
+
 export const profileRouter = createTRPCRouter({
+  // List available device profiles
+  listDeviceTypes: publicProcedure.query(() => {
+    const deviceTypes = getAvailableDeviceTypes();
+    return deviceTypes.map((type) => ({
+      id: type,
+      label: DEVICE_TYPE_LABELS[type],
+    }));
+  }),
+
+  // Get a device profile by type
+  getDeviceProfile: publicProcedure
+    .input(z.object({ deviceType: deviceTypeSchema }))
+    .query(({ input }) => {
+      return {
+        deviceType: input.deviceType,
+        label: DEVICE_TYPE_LABELS[input.deviceType],
+        config: getDeviceProfile(input.deviceType),
+      };
+    }),
+
   // Save or update a profile with fingerprint and canvas data
   save: publicProcedure
     .input(
@@ -27,10 +57,15 @@ export const profileRouter = createTRPCRouter({
         name: z.string().optional(),
         fingerprintConfig: fingerprintConfigSchema,
         canvasFingerprints: z.array(canvasFingerprintSchema).optional(),
+        deviceType: deviceTypeSchema.optional(),
       }),
     )
     .mutation(async ({ ctx, input }) => {
-      const config = input.fingerprintConfig;
+      // Apply device profile if specified
+      let config = input.fingerprintConfig as Record<string, unknown>;
+      if (input.deviceType && isValidDeviceType(input.deviceType)) {
+        config = mergeWithDeviceProfile(config, input.deviceType);
+      }
       const profileInfo = getProfileInfo(config);
 
       // Determine profile name
@@ -137,8 +172,14 @@ export const profileRouter = createTRPCRouter({
     }),
 
   // Get Python-ready config including canvas fingerprints
+  // Optionally apply a device profile to override browser-specific properties
   getConfig: publicProcedure
-    .input(z.object({ name: z.string() }))
+    .input(
+      z.object({
+        name: z.string(),
+        deviceType: deviceTypeSchema.optional(),
+      }),
+    )
     .query(async ({ ctx, input }) => {
       const profile = await ctx.db.profile.findUnique({
         where: { name: input.name },
@@ -152,7 +193,12 @@ export const profileRouter = createTRPCRouter({
       }
 
       // Build config object from stored fingerprint
-      const config = profile.fingerprintConfig as Record<string, unknown>;
+      let config = profile.fingerprintConfig as Record<string, unknown>;
+
+      // Apply device profile if specified
+      if (input.deviceType && isValidDeviceType(input.deviceType)) {
+        config = mergeWithDeviceProfile(config, input.deviceType);
+      }
 
       // Add canvas fingerprints if available
       if (profile.canvasFingerprints.length > 0) {
@@ -165,6 +211,7 @@ export const profileRouter = createTRPCRouter({
 
       return {
         name: profile.name,
+        deviceType: input.deviceType ?? null,
         detectorVersion: profile.detectorVersion,
         currentDetectorVersion: DETECTOR_VERSION,
         isOutdated: profile.detectorVersion < DETECTOR_VERSION,

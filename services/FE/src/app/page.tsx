@@ -7,7 +7,7 @@ import {
   detectAll,
   DETECTOR_VERSION,
   type CamoufoxConfig,
-} from "~/lib/fingerprint-detector";
+} from "~/lib/fingerprint-collector";
 import { generateProfileName } from "~/lib/profile-utils";
 import { toPythonDict, toJSON, getConfigStats } from "~/lib/config-formatter";
 
