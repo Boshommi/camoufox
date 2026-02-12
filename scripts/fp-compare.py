@@ -1769,10 +1769,23 @@ def main():
         else:
             # Use config from real browser fingerprint (FE already generates Camoufox config)
             if real_result and real_result.get('config'):
-                # Filter out comparison-only keys (component.*, comparison.*)
+                # Filter out comparison-only keys and problematic values
+                skip_prefixes = ('component.', 'comparison.')
+                # Skip keys that shouldn't be spoofed or cause issues
+                skip_keys = (
+                    'navigator.webdriver',  # Don't copy automation detection
+                    'navigator.plugins',    # Complex list
+                    'net-info-api',         # Setting to False crashes Camoufox
+                )
                 spoof_config = {k: v for k, v in real_result['config'].items()
-                               if not k.startswith('component.') and not k.startswith('comparison.')}
+                               if not any(k.startswith(p) for p in skip_prefixes) and k not in skip_keys}
+
+                # Force webdriver to false (Safari doesn't expose automation)
+                spoof_config['navigator.webdriver'] = False
+
                 print(f"  Using dynamic config with {len(spoof_config)} properties from real fingerprint")
+                if 'voices' in spoof_config:
+                    print(f"  Voices: {len(spoof_config['voices'])} items, blockIfNotDefined: {spoof_config.get('voices:blockIfNotDefined')}")
             else:
                 # Fallback to static config only if no real fingerprint
                 spoof_config = SAFARI_MACOS_CONFIG

@@ -1,3 +1,35 @@
+diff --git a/dom/media/webspeech/synth/SpeechSynthesis.cpp b/dom/media/webspeech/synth/SpeechSynthesis.cpp
+index 97a8c83efb..2516d504d0 100644
+--- a/dom/media/webspeech/synth/SpeechSynthesis.cpp
++++ b/dom/media/webspeech/synth/SpeechSynthesis.cpp
+@@ -238,6 +238,8 @@ void SpeechSynthesis::GetVoices(
+ 
+   nsISupports* voiceParent = NS_ISUPPORTS_CAST(nsIObserver*, this);
+ 
++  // Always create new voice objects to ensure duplicates are distinct objects
++  // (Safari returns duplicate voiceURIs as separate objects in the array)
+   for (uint32_t i = 0; i < voiceCount; i++) {
+     nsAutoString uri;
+     rv = nsSynthVoiceRegistry::GetInstance()->GetVoice(i, uri);
+@@ -247,15 +249,12 @@ void SpeechSynthesis::GetVoices(
+       continue;
+     }
+ 
+-    SpeechSynthesisVoice* voice = mVoiceCache.GetWeak(uri);
+-
+-    if (!voice) {
+-      voice = new SpeechSynthesisVoice(voiceParent, uri);
+-    }
+-
++    SpeechSynthesisVoice* voice = new SpeechSynthesisVoice(voiceParent, uri);
+     aResult.AppendElement(voice);
+   }
+ 
++  // Clear and repopulate cache for memory management
++  // (duplicates will overwrite but that's fine since we create fresh each time)
+   mVoiceCache.Clear();
+ 
+   for (uint32_t i = 0; i < aResult.Length(); i++) {
 diff --git a/dom/media/webspeech/synth/moz.build b/dom/media/webspeech/synth/moz.build
 index 665030f5ca..5c20c9f0fb 100644
 --- a/dom/media/webspeech/synth/moz.build
@@ -10,7 +42,7 @@ index 665030f5ca..5c20c9f0fb 100644
 +# DOM Mask
 +LOCAL_INCLUDES += ['/camoucfg']
 diff --git a/dom/media/webspeech/synth/nsSynthVoiceRegistry.cpp b/dom/media/webspeech/synth/nsSynthVoiceRegistry.cpp
-index 8ef814a009..5951aa502d 100644
+index 8ef814a009..1045b12887 100644
 --- a/dom/media/webspeech/synth/nsSynthVoiceRegistry.cpp
 +++ b/dom/media/webspeech/synth/nsSynthVoiceRegistry.cpp
 @@ -26,6 +26,7 @@
@@ -21,11 +53,14 @@ index 8ef814a009..5951aa502d 100644
  
  using mozilla::intl::LocaleService;
  
-@@ -168,6 +169,20 @@ nsSynthVoiceRegistry* nsSynthVoiceRegistry::GetInstance() {
+@@ -168,6 +169,24 @@ nsSynthVoiceRegistry* nsSynthVoiceRegistry::GetInstance() {
        // Start up all speech synth services.
        NS_CreateServicesFromCategory(NS_SPEECH_SYNTH_STARTED, nullptr,
                                      NS_SPEECH_SYNTH_STARTED);
 +      // Load voices from MaskConfig
++      // Set flag to skip IPC broadcasts during initial loading
++      // (avoids duplicate voices when actor is created during GetInstance)
++      gSynthVoiceRegistry->mLoadingInitialVoices = true;
 +      if (auto voices = MaskConfig::MVoices()) {
 +        for (const auto& [lang, name, uri, isDefault, isLocal] :
 +             voices.value()) {
@@ -39,10 +74,19 @@ index 8ef814a009..5951aa502d 100644
 +          }
 +        }
 +      }
++      gSynthVoiceRegistry->mLoadingInitialVoices = false;
      }
    }
  
-@@ -304,6 +319,8 @@ nsSynthVoiceRegistry::AddVoice(nsISpeechService* aService,
+@@ -190,7 +209,6 @@ bool nsSynthVoiceRegistry::SendInitialVoicesAndState(
+ 
+   for (uint32_t i = 0; i < mVoices.Length(); ++i) {
+     RefPtr<VoiceData> voice = mVoices[i];
+-
+     voices.AppendElement(RemoteVoice(voice->mUri, voice->mName, voice->mLang,
+                                      voice->mIsLocal, voice->mIsQueued));
+   }
+@@ -304,6 +322,8 @@ nsSynthVoiceRegistry::AddVoice(nsISpeechService* aService,
      return NS_ERROR_NOT_AVAILABLE;
    }
  
@@ -51,7 +95,40 @@ index 8ef814a009..5951aa502d 100644
    return AddVoiceImpl(aService, aUri, aName, aLang, aLocalService,
                        aQueuesUtterances);
  }
-@@ -778,6 +795,35 @@ void nsSynthVoiceRegistry::SpeakImpl(VoiceData* aVoice, nsSpeechTask* aTask,
+@@ -504,18 +524,26 @@ nsSynthVoiceRegistry::GetVoiceName(const nsAString& aUri, nsAString& aRetval) {
+ nsresult nsSynthVoiceRegistry::AddVoiceImpl(
+     nsISpeechService* aService, const nsAString& aUri, const nsAString& aName,
+     const nsAString& aLang, bool aLocalService, bool aQueuesUtterances) {
+-  const bool found = mUriVoiceMap.Contains(aUri);
+-  if (NS_WARN_IF(found)) {
+-    return NS_ERROR_INVALID_ARG;
+-  }
+-
++  // Allow duplicates in mVoices array for Safari compatibility
++  // mUriVoiceMap keeps first voice per URI (for internal lookups - properties
++  // are identical)
+   RefPtr<VoiceData> voice = new VoiceData(aService, aUri, aName, aLang,
+                                           aLocalService, aQueuesUtterances);
+ 
+   mVoices.AppendElement(voice);
+-  mUriVoiceMap.InsertOrUpdate(aUri, std::move(voice));
++
++  // Only add to URI map if not already present (first voice wins for lookups)
++  if (!mUriVoiceMap.Contains(aUri)) {
++    mUriVoiceMap.InsertOrUpdate(aUri, std::move(voice));
++  }
+   mUseGlobalQueue |= aQueuesUtterances;
+ 
++  // Skip IPC broadcast during initial MVoices loading
++  // (SendInitialVoicesAndState will send all voices after init is complete)
++  if (mLoadingInitialVoices) {
++    return NS_OK;
++  }
++
+   nsTArray<SpeechSynthesisParent*> ssplist;
+   GetAllSpeechSynthActors(ssplist);
+ 
+@@ -778,6 +806,35 @@ void nsSynthVoiceRegistry::SpeakImpl(VoiceData* aVoice, nsSpeechTask* aTask,
         NS_ConvertUTF16toUTF8(aText).get(),
         NS_ConvertUTF16toUTF8(aVoice->mUri).get(), aRate, aPitch));
  
@@ -87,3 +164,18 @@ index 8ef814a009..5951aa502d 100644
    aTask->Init();
  
    if (NS_FAILED(aVoice->mService->Speak(aText, aVoice->mUri, aVolume, aRate,
+diff --git a/dom/media/webspeech/synth/nsSynthVoiceRegistry.h b/dom/media/webspeech/synth/nsSynthVoiceRegistry.h
+index d3a5476ae0..b41cd833b6 100644
+--- a/dom/media/webspeech/synth/nsSynthVoiceRegistry.h
++++ b/dom/media/webspeech/synth/nsSynthVoiceRegistry.h
+@@ -94,6 +94,10 @@ class nsSynthVoiceRegistry final : public nsISynthVoiceRegistry {
+   nsTArray<RefPtr<GlobalQueueItem>> mGlobalQueue;
+ 
+   bool mIsSpeaking;
++
++  // Flag to skip IPC broadcasts during initial MVoices loading
++  // Prevents duplicate voices when actor is created during GetInstance()
++  bool mLoadingInitialVoices = false;
+ };
+ 
+ }  // namespace mozilla::dom

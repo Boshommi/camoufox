@@ -116,18 +116,34 @@ function convertToCamoufoxConfig(
   config["navigator.maxTouchPoints"] = nav.maxTouchPoints;
   config["navigator.onLine"] = nav.onLine;
 
-  // Firefox-specific properties
-  if ("buildID" in nav) {
+  // Firefox-specific properties - detect availability and hide if not present
+  if ("buildID" in nav && (nav as Navigator & { buildID?: string }).buildID !== undefined) {
     config["navigator.buildID"] = (nav as Navigator & { buildID?: string }).buildID;
+  } else {
+    config["navigator.buildID:hide"] = true;
   }
-  if ("oscpu" in nav) {
+
+  if ("oscpu" in nav && (nav as Navigator & { oscpu?: string }).oscpu !== undefined) {
     config["navigator.oscpu"] = (nav as Navigator & { oscpu?: string }).oscpu;
+  } else {
+    config["navigator.oscpu:hide"] = true;
   }
-  if ("doNotTrack" in nav && nav.doNotTrack !== null) {
+
+  if ("doNotTrack" in nav && nav.doNotTrack !== null && nav.doNotTrack !== "unspecified") {
     config["navigator.doNotTrack"] = nav.doNotTrack;
+  } else {
+    config["navigator.doNotTrack:hide"] = true;
   }
-  if ("globalPrivacyControl" in nav) {
+
+  if ("globalPrivacyControl" in nav && (nav as Navigator & { globalPrivacyControl?: boolean }).globalPrivacyControl !== undefined) {
     config["navigator.globalPrivacyControl"] = (nav as Navigator & { globalPrivacyControl?: boolean }).globalPrivacyControl;
+  } else {
+    config["navigator.globalPrivacyControl:hide"] = true;
+  }
+
+  // Battery API - Firefox/Chrome only, Safari doesn't have it
+  if (!("getBattery" in nav)) {
+    config["navigator.getBattery:hide"] = true;
   }
 
   // Plugins (deprecated but still fingerprinted)
@@ -265,24 +281,33 @@ function convertToCamoufoxConfig(
   // ============================================
   // Speech synthesis voices
   // ============================================
+  // Note: Safari reports duplicate voices (same voiceURI appearing multiple times).
+  // Camoufox uses voiceURI as unique key, so duplicates will be collapsed.
+  // This is a known limitation - voice count may differ between real Safari and spoofed.
+  const mapVoice = (v: { name: string; lang: string; voiceURI: string; default: boolean; localService: boolean }) => ({
+    name: v.name,
+    lang: v.lang,
+    voiceUri: v.voiceURI,
+    isDefault: v.default,
+    isLocalService: v.localService,
+  });
+
   if (asyncData?.voices && asyncData.voices.list.length > 0) {
-    config["voices"] = asyncData.voices.list.map((v) => ({
-      name: v.name,
-      lang: v.lang,
-      voiceUri: v.voiceURI,
-      isDefault: v.default,
-      isLocalService: v.localService,
-    }));
+    config["voices"] = asyncData.voices.list.map(mapVoice);
+    // Block system voices from being added - only use our spoofed voices
+    config["voices:blockIfNotDefined"] = true;
   } else if (window.speechSynthesis) {
     const voices = window.speechSynthesis.getVoices();
     if (voices.length > 0) {
-      config["voices"] = voices.map((v) => ({
+      config["voices"] = voices.map((v) => mapVoice({
         name: v.name,
         lang: v.lang,
-        voiceUri: v.voiceURI,
-        isDefault: v.default,
-        isLocalService: v.localService,
+        voiceURI: v.voiceURI,
+        default: v.default,
+        localService: v.localService,
       }));
+      // Block system voices from being added - only use our spoofed voices
+      config["voices:blockIfNotDefined"] = true;
     }
   }
 
@@ -311,17 +336,28 @@ function convertToCamoufoxConfig(
     // Boolean media queries
     config["mediaQuery:monochrome"] = window.matchMedia("(monochrome)").matches;
     config["mediaQuery:color"] = window.matchMedia("(color)").matches;
+
+    // Fallback for inverted-colors - Firefox doesn't support this query natively,
+    // but Safari does. The Camoufox patch handles it, so we set a default.
+    if (!config["mediaQuery:inverted-colors"]) {
+      config["mediaQuery:inverted-colors"] = "none";
+    }
   }
 
   // ============================================
   // Network Info API (valid in Camoufox as net-info-api:*)
+  // Safari does NOT have navigator.connection - must hide it when spoofing Safari
   // ============================================
   if ("connection" in nav && nav.connection) {
     const conn = nav.connection as NetworkInformation;
+    config["net-info-api"] = true;
     config["net-info-api:effectiveType"] = conn.effectiveType;
     config["net-info-api:downlink"] = conn.downlink;
     config["net-info-api:rtt"] = conn.rtt;
     config["net-info-api:saveData"] = conn.saveData;
+  } else {
+    // Safari doesn't have Network Information API - hide it completely
+    config["navigator.connection:hide"] = true;
   }
 
   // ============================================
@@ -349,28 +385,98 @@ function convertToCamoufoxConfig(
   }
 
   // ============================================
-  // Media Codec overrides (placeholder - user should configure)
+  // Font whitelist for Safari spoofing
+  // These fonts match iOS Safari detection patterns and exist on macOS
+  // ============================================
+  config["fonts"] = [
+    // Base fonts (always detected)
+    "monospace",
+    "sans-serif",
+    "serif",
+    // Arial variants
+    "Arial Black",
+    "Arial Hebrew",
+    "Arial MT",
+    // Other detected fonts
+    "Century Gothic",
+    "Comic Sans",
+    "Comic Sans MS",
+    "Courier",
+    "Courier New",
+    "Garamond",
+    "Geneva",
+    "Georgia",
+    "Lucida Calligraphy",
+    "Lucida Sans",
+    "Lucida Sans Typewriter",
+    "MS Serif",
+    "Segoe UI Light",
+    "Segoe UI Semibold",
+    "Segoe UI Symbol",
+    "Times",
+    "Times New Roman",
+    "Times New Roman PS",
+    "Trebuchet MS",
+    "Verdana",
+  ];
+
+  // ============================================
+  // Media Codec overrides - matches Safari/iOS detection pattern
+  // Tests: 10 MEDIA_TYPES × 7 MEDIA_CODECS + 10 type-only = 80 positions
+  // MEDIA_TYPES: video/ogg, video/mp4, video/webm, audio/x-aiff, audio/x-m4a,
+  //              audio/mpeg, audio/aac, audio/wav, audio/ogg, audio/mp4
+  // MEDIA_CODECS: theora, vorbis, 1, avc1.4D401E, mp4a.40.2, vp8.0, mp4a.40.5
   // ============================================
   config["mediaCodec:overrides"] = {
+    // video/ogg - Safari doesn't support ogg
+    "video/ogg": "",
+    'video/ogg; codecs="theora"': "",
+    'video/ogg; codecs="vorbis"': "",
+
+    // video/mp4 - Safari supports mp4
     "video/mp4": "maybe",
-    'video/mp4; codecs="avc1.42E01E"': "probably",
-    'video/mp4; codecs="avc1.42E01E, mp4a.40.2"': "probably",
+    'video/mp4; codecs="1"': "probably",
+    'video/mp4; codecs="avc1.4D401E"': "probably",
+    'video/mp4; codecs="mp4a.40.2"': "",
+    'video/mp4; codecs="vp8.0"': "",
+    'video/mp4; codecs="mp4a.40.5"': "",
+
+    // video/webm - Safari has limited webm support
     "video/webm": "maybe",
-    'video/webm; codecs="vp8"': "probably",
-    'video/webm; codecs="vp9"': "probably",
-    'video/webm; codecs="vp8, vorbis"': "probably",
+    'video/webm; codecs="vp8.0"': "",
+
+    // audio/x-aiff
+    "audio/x-aiff": "maybe",
+
+    // audio/x-m4a - Safari supports m4a
+    "audio/x-m4a": "maybe",
+    'audio/x-m4a; codecs="1"': "probably",
+    'audio/x-m4a; codecs="avc1.4D401E"': "probably",
+    'audio/x-m4a; codecs="mp4a.40.2"': "probably",
+
+    // audio/mpeg - Safari supports
     "audio/mpeg": "maybe",
-    "audio/mp4": "maybe",
-    'audio/mp4; codecs="mp4a.40.2"': "probably",
-    "audio/ogg": "maybe",
-    'audio/ogg; codecs="vorbis"': "probably",
-    'audio/ogg; codecs="opus"': "probably",
-    "audio/webm": "maybe",
-    'audio/webm; codecs="vorbis"': "probably",
-    'audio/webm; codecs="opus"': "probably",
-    "audio/wav": "maybe",
-    "audio/flac": "maybe",
+
+    // audio/aac - Safari supports
     "audio/aac": "maybe",
+    'audio/aac; codecs="1"': "probably",
+    'audio/aac; codecs="mp4a.40.2"': "probably",
+
+    // audio/wav - Safari supports
+    "audio/wav": "maybe",
+
+    // audio/ogg - Safari limited support
+    "audio/ogg": "",
+    'audio/ogg; codecs="vorbis"': "probably",
+    'audio/ogg; codecs="1"': "probably",
+
+    // audio/mp4 - Safari supports
+    "audio/mp4": "maybe",
+    'audio/mp4; codecs="vorbis"': "probably",
+    'audio/mp4; codecs="1"': "probably",
+    'audio/mp4; codecs="avc1.4D401E"': "probably",
+    'audio/mp4; codecs="mp4a.40.2"': "probably",
+    'audio/mp4; codecs="mp4a.40.5"': "probably",
   };
 
   // ============================================
